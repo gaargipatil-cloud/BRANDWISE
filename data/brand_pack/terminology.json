@@ -1,0 +1,28 @@
+{
+  "preferred_terms": {
+    "robo-advisor": "automated saving assistant",
+    "cheap": "cost-effective",
+    "instant cash": "same-day balance transfer",
+    "crypto wallet": "digital asset vault"
+  },
+  "banned_words": [
+    "risk-free",
+    "guaranteed returns",
+    "get rich quick",
+    "bulletproof",
+    "can't lose",
+    "free money"
+  ],
+  "channel_length_limits": {
+    "twitter": 280,
+    "linkedin": 1200,
+    "email_subject": 80,
+    "blog_post": 4000
+  },
+  "required_disclaimers": [
+    {
+      "trigger_terms": ["investing", "portfolio", "yield", "FDIC", "stocks"],
+      "disclaimer_text": "Finwise is a financial technology company, not an FDIC-insured bank. Banking services provided by partner banks, Members FDIC."
+    }
+  ]
+}

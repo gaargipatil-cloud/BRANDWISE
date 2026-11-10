@@ -1,0 +1,142 @@
+[
+  {
+    "id": "draft_01",
+    "title": "Clean Social Announcement",
+    "channel": "twitter",
+    "text": "Managing money should feel calm. Finwise launched in 2023 to bring clarity to your wallet with automated round-ups.",
+    "seeded_errors": []
+  },
+  {
+    "id": "draft_02",
+    "title": "Clean Email Welcome",
+    "channel": "email_subject",
+    "text": "Welcome to Finwise: Let us build better savings habits together.",
+    "seeded_errors": []
+  },
+  {
+    "id": "draft_03",
+    "title": "Banned Guarantee Claim",
+    "channel": "twitter",
+    "text": "Switch your daily banking to Finwise today for risk-free savings and guaranteed returns on all rainy day funds.",
+    "seeded_errors": [
+      "banned_word:risk-free",
+      "banned_word:guaranteed returns",
+      "policy_violation:guarantees_prohibited"
+    ]
+  },
+  {
+    "id": "draft_04",
+    "title": "Missing 'Up To' Savings Figure",
+    "channel": "twitter",
+    "text": "Every single member will save 30% on fees within their first month of using our smart card.",
+    "seeded_errors": [
+      "policy_violation:savings_missing_qualifier",
+      "fact_contradiction:guaranteed_blanket_savings"
+    ]
+  },
+  {
+    "id": "draft_05",
+    "title": "Uncited Superlative Ranking",
+    "channel": "twitter",
+    "text": "Download the #1 finance app and experience the best budgeting tool created for modern young professionals.",
+    "seeded_errors": [
+      "policy_violation:uncited_ranking_number_one",
+      "policy_violation:uncited_superlative_best"
+    ]
+  },
+  {
+    "id": "draft_06",
+    "title": "Deprecate Preferred Term Cheap",
+    "channel": "linkedin",
+    "text": "We built a cheap alternative to big banks with automated round-ups so your change works for you every day.",
+    "seeded_errors": [
+      "preferred_term:cheap"
+    ]
+  },
+  {
+    "id": "draft_07",
+    "title": "Missing FDIC Regulatory Disclaimer",
+    "channel": "twitter",
+    "text": "Grow your investing portfolio with automated recurring deposits into our high yield index tracker.",
+    "seeded_errors": [
+      "missing_disclaimer:fdic_partner_bank"
+    ]
+  },
+  {
+    "id": "draft_08",
+    "title": "Contradicted Launch Year and Languages",
+    "channel": "twitter",
+    "text": "Finwise launched in 2018 and proudly supports 12 languages across North America and Europe.",
+    "seeded_errors": [
+      "fact_contradiction:launch_year_2018",
+      "fact_contradiction:supports_12_languages"
+    ]
+  },
+  {
+    "id": "draft_09",
+    "title": "Contradicted User Count",
+    "channel": "linkedin",
+    "text": "Over 2 million active members count on Finwise every morning to organize their expenses.",
+    "seeded_errors": [
+      "fact_contradiction:user_count_2_million"
+    ]
+  },
+  {
+    "id": "draft_10",
+    "title": "Contradicted Cashback Percentage",
+    "channel": "twitter",
+    "text": "Finwise Plus members enjoy 5% cashback on all grocery orders made with the debit card.",
+    "seeded_errors": [
+      "fact_contradiction:cashback_5_percent"
+    ]
+  },
+  {
+    "id": "draft_11",
+    "title": "Unverifiable Crypto Feature Claim",
+    "channel": "twitter",
+    "text": "Trade over 45 decentralized tokens with zero network gas fees directly inside the Finwise wallet.",
+    "seeded_errors": [
+      "unverifiable_claim:crypto_trading_tokens"
+    ]
+  },
+  {
+    "id": "draft_12",
+    "title": "Unverifiable Physical Branch Network",
+    "channel": "linkedin",
+    "text": "Visit any of our 200 physical community branches opening across California this summer for coffee and financial guidance.",
+    "seeded_errors": [
+      "unverifiable_claim:physical_branches_california"
+    ]
+  },
+  {
+    "id": "draft_13",
+    "title": "Twitter Channel Length Exceeded",
+    "channel": "twitter",
+    "text": "Finwise is proud to deliver a calmer path forward toward financial wellness. We believe nobody should struggle through confusing statement fees or complicated account maintenance balances. That is why our team worked tirelessly throughout 2023 to design automated round-ups, instant insights, and multi-language support so every family can take control of their budget with complete peace of mind forever.",
+    "seeded_errors": [
+      "channel_limit_exceeded:twitter_length"
+    ]
+  },
+  {
+    "id": "draft_14",
+    "title": "Email Subject Length Exceeded",
+    "channel": "email_subject",
+    "text": "Action Required: Check out our all new updated savings breakdown and review your monthly budget immediately",
+    "seeded_errors": [
+      "channel_limit_exceeded:email_subject_length"
+    ]
+  },
+  {
+    "id": "draft_15",
+    "title": "Combined Multi-Error Blast",
+    "channel": "twitter",
+    "text": "Try our cheap robo-advisor for risk-free investing and watch your portfolio double with 0% risk.",
+    "seeded_errors": [
+      "preferred_term:cheap",
+      "preferred_term:robo-advisor",
+      "banned_word:risk-free",
+      "policy_violation:guarantees_prohibited",
+      "missing_disclaimer:fdic_partner_bank"
+    ]
+  }
+]

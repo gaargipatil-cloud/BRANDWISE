@@ -1,0 +1,1130 @@
+<!-- path: frontend/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brandwise | Pre-Publication Brand & Fact Review</title>
+  <style>
+    /* Calm Editorial Styling: warm off-white paper, deep navy, gold accent */
+    :root {
+      --bg-paper: #FAF8F5;
+      --bg-surface: #FFFFFF;
+      --text-main: #14213D;
+      --text-muted: #5A6578;
+      --gold-accent: #D4AF37;
+      --gold-light: #FBF6E9;
+      --border-color: #E2DDD5;
+      --red-contradicted: #B91C1C;
+      --red-bg: #FEF2F2;
+      --amber-unverifiable: #D97706;
+      --amber-bg: #FFFBEB;
+      --green-supported: #15803D;
+      --green-bg: #F0FDF4;
+      --font-serif: "Georgia", "Times New Roman", serif;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-paper);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top editorial banner */
+    header {
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-color);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .brand-title {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+    }
+
+    .brand-title h1 {
+      font-family: var(--font-serif);
+      font-size: 1.6rem;
+      letter-spacing: -0.5px;
+      color: var(--text-main);
+    }
+
+    .brand-tagline {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .top-controls {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .role-selector {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--gold-light);
+      border: 1px solid var(--gold-accent);
+      padding: 0.35rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+
+    .role-selector select {
+      background: transparent;
+      border: none;
+      font-weight: 600;
+      color: var(--text-main);
+      cursor: pointer;
+      outline: none;
+    }
+
+    .demo-note {
+      font-size: 0.75rem;
+      color: var(--amber-unverifiable);
+      font-weight: 600;
+    }
+
+    /* Navigation tabs */
+    nav {
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-color);
+      padding: 0 2rem;
+      display: flex;
+      gap: 2rem;
+    }
+
+    nav button {
+      background: none;
+      border: none;
+      padding: 0.85rem 0;
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+    }
+
+    nav button:hover {
+      color: var(--text-main);
+    }
+
+    nav button.active {
+      color: var(--text-main);
+      font-weight: 600;
+      border-bottom: 3px solid var(--gold-accent);
+    }
+
+    main {
+      flex: 1;
+      padding: 2rem;
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Buttons */
+    .btn {
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-weight: 500;
+      font-size: 0.88rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      border: 1px solid transparent;
+    }
+
+    .btn-primary {
+      background: var(--text-main);
+      color: #FFFFFF;
+    }
+    .btn-primary:hover { background: #233559; }
+
+    .btn-secondary {
+      background: var(--bg-surface);
+      color: var(--text-main);
+      border-color: var(--border-color);
+    }
+    .btn-secondary:hover { background: var(--bg-paper); }
+
+    .btn-accept {
+      background: var(--green-bg);
+      color: var(--green-supported);
+      border-color: #BBF7D0;
+    }
+
+    .btn-dispute {
+      background: var(--amber-bg);
+      color: var(--amber-unverifiable);
+      border-color: #FDE68A;
+    }
+
+    /* Creator Layout */
+    .example-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .example-bar span {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .editor-section {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 0.4rem;
+      color: var(--text-muted);
+    }
+
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.95rem;
+      background: var(--bg-paper);
+      color: var(--text-main);
+    }
+
+    .form-group textarea {
+      height: 130px;
+      resize: vertical;
+    }
+
+    /* Findings 2-column view */
+    .review-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 1.5rem;
+    }
+
+    .panel-header {
+      font-family: var(--font-serif);
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Highlighted text styling */
+    .annotated-text {
+      font-size: 1.05rem;
+      line-height: 1.8;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .hl-contradicted {
+      background-color: #FECACA;
+      border-bottom: 2px solid var(--red-contradicted);
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+
+    .hl-rule {
+      background-color: var(--gold-light);
+      border-bottom: 2px solid var(--gold-accent);
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+
+    .hl-unverifiable {
+      background: repeating-linear-gradient(
+        -45deg,
+        #FEF3C7,
+        #FEF3C7 5px,
+        #FDE68A 5px,
+        #FDE68A 10px
+      );
+      border-bottom: 2px solid var(--amber-unverifiable);
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+
+    /* Finding card right column */
+    .finding-card {
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      background: var(--bg-paper);
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .finding-card.active-target {
+      border-color: var(--text-main);
+      box-shadow: 0 0 0 2px var(--gold-accent);
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+    }
+
+    .verdict-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 0.25rem 0.5rem;
+      border-radius: 3px;
+      letter-spacing: 0.5px;
+    }
+
+    .verdict-contradicted { background: var(--red-bg); color: var(--red-contradicted); border: 1px solid #FCA5A5; }
+    .verdict-unverifiable { background: var(--amber-bg); color: var(--amber-unverifiable); border: 1px solid #FCD34D; }
+    .verdict-supported { background: var(--green-bg); color: var(--green-supported); border: 1px solid #86EFAC; }
+
+    .source-quote-box {
+      font-family: var(--font-serif);
+      font-style: italic;
+      background: #FFFFFF;
+      border-left: 3px solid var(--gold-accent);
+      padding: 0.5rem 0.75rem;
+      margin: 0.5rem 0;
+      font-size: 0.9rem;
+      color: #374151;
+    }
+
+    .diff-box {
+      background: #FFFFFF;
+      border: 1px solid var(--border-color);
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      margin: 0.5rem 0;
+    }
+    .diff-before { color: var(--red-contradicted); text-decoration: line-through; }
+    .diff-after { color: var(--green-supported); font-weight: 600; margin-left: 0.5rem; }
+
+    .confidence-bar-bg {
+      background: #E5E7EB;
+      height: 4px;
+      border-radius: 2px;
+      margin: 0.5rem 0;
+      overflow: hidden;
+    }
+    .confidence-fill {
+      background: var(--gold-accent);
+      height: 100%;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    /* Manager Queue Table */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg-surface);
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+    }
+
+    .data-table th, .data-table td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 0.9rem;
+    }
+
+    .data-table th {
+      background: var(--bg-paper);
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .badge-risk-high {
+      background: var(--red-bg);
+      color: var(--red-contradicted);
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.8rem;
+    }
+    .badge-risk-low {
+      background: var(--green-bg);
+      color: var(--green-supported);
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.8rem;
+    }
+
+    /* Modal for Dispute */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 33, 61, 0.4);
+      align-items: center;
+      justify-content: center;
+      z-index: 99;
+    }
+    .modal-box {
+      background: var(--bg-surface);
+      padding: 1.5rem;
+      border-radius: 6px;
+      width: 440px;
+      max-width: 90%;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    }
+
+    /* Responsive */
+    @media (max-width: 860px) {
+      .review-grid, .form-grid { grid-template-columns: 1fr; }
+      header { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand-title">
+      <h1>Brandwise</h1>
+      <span class="brand-tagline">Pre-Publication Brand Guard</span>
+    </div>
+
+    <div class="top-controls">
+      <span class="demo-note">Demo mode, no sign-in</span>
+      <div class="role-selector">
+        <label for="roleSelect">Viewing as:</label>
+        <select id="roleSelect" onchange="handleRoleChange(this.value)">
+          <option value="creator">Creator</option>
+          <option value="manager">Manager</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <nav>
+    <button id="tabBtnCreator" class="active" onclick="switchTab('creator')">Draft Workspace</button>
+    <button id="tabBtnManager" onclick="switchTab('manager')">Manager Queue</button>
+    <button id="tabBtnHealth" onclick="switchTab('health')">Guideline Health</button>
+    <button id="tabBtnEval" onclick="switchTab('eval')">Evaluation</button>
+    <button id="tabBtnAudit" onclick="switchTab('audit')">Activity Log</button>
+    <button id="tabBtnAbout" onclick="switchTab('about')">About</button>
+  </nav>
+
+  <main>
+    <!-- TAB 1: CREATOR WORKSPACE -->
+    <section id="tabCreator" class="tab-content active">
+      <div class="example-bar">
+        <span>Try an example:</span>
+        <button class="btn btn-secondary" onclick="loadExample(1)">Clean Draft</button>
+        <button class="btn btn-secondary" onclick="loadExample(2)">Contradicted Fact & Banned Terms</button>
+        <button class="btn btn-secondary" onclick="loadExample(3)">Unverifiable Claim</button>
+      </div>
+
+      <div class="editor-section">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="draftTitle">Campaign / Title</label>
+            <input type="text" id="draftTitle" value="Weekly Savings Post" />
+          </div>
+          <div class="form-group">
+            <label for="channelSelect">Channel</label>
+            <select id="channelSelect">
+              <option value="twitter">Twitter / X (280 char)</option>
+              <option value="linkedin">LinkedIn (1200 char)</option>
+              <option value="email_subject">Email Subject (80 char)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="draftBody">Draft Content (<span id="charCount">0</span>/3000 chars)</label>
+          <textarea id="draftBody" oninput="updateCharCount()"></textarea>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
+          <button class="btn btn-primary" id="btnSubmitReview" onclick="submitDraftForReview()">Analyze Content</button>
+          <button class="btn btn-secondary" id="btnResubmit" style="display:none;" onclick="resubmitActiveDraft()">Save As New Version</button>
+        </div>
+      </div>
+
+      <div class="review-grid" id="reviewResults" style="display:none;">
+        <div class="panel">
+          <div class="panel-header">
+            <span>Annotated Draft</span>
+            <span id="versionIndicator" style="font-size:0.85rem; color:var(--text-muted); font-family:var(--font-sans);">Version 1</span>
+          </div>
+          <div id="annotatedContent" class="annotated-text"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <span>Findings & Rules</span>
+            <span id="findingsCountBadge" style="font-size:0.85rem; color:var(--text-muted); font-family:var(--font-sans);">0 issues</span>
+          </div>
+          <div id="findingsCardList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: MANAGER QUEUE -->
+    <section id="tabManager" class="tab-content">
+      <div class="panel" style="margin-bottom:1.5rem;">
+        <div class="panel-header">Approval Queue (Ranked by Risk)</div>
+        <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1rem;">
+          Submissions containing contradictions or unverifiable claims are automatically elevated to High Risk.
+        </p>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Channel</th>
+              <th>Risk Level</th>
+              <th>Issues</th>
+              <th>Disputes</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="queueTableBody"></tbody>
+        </table>
+      </div>
+
+      <div id="managerReviewPane" class="panel" style="display:none;">
+        <div class="panel-header">
+          <span id="managerDraftTitle">Reviewing Draft</span>
+          <span id="managerDraftStatus" class="verdict-badge">Pending</span>
+        </div>
+        <div class="review-grid">
+          <div>
+            <h4 style="margin-bottom:0.5rem; font-size:0.9rem; color:var(--text-muted);">Current Text:</h4>
+            <div id="managerDraftText" class="annotated-text" style="background:var(--bg-paper); padding:1rem; border-radius:4px; border:1px solid var(--border-color);"></div>
+          </div>
+          <div>
+            <h4 style="margin-bottom:0.5rem; font-size:0.9rem; color:var(--text-muted);">Findings & Dispute Explanations:</h4>
+            <div id="managerFindingsList"></div>
+            <div style="margin-top:1.5rem; border-top:1px solid var(--border-color); padding-top:1rem;">
+              <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:0.3rem;">Manager Decision Comment</label>
+              <textarea id="managerComment" style="width:100%; height:70px; padding:0.5rem; border:1px solid var(--border-color); border-radius:4px; margin-bottom:0.75rem;" placeholder="Add specific guidance or approval feedback..."></textarea>
+              <div style="display:flex; gap:0.75rem;">
+                <button class="btn btn-primary" onclick="makeManagerDecision('approve')">Approve Content</button>
+                <button class="btn btn-dispute" onclick="makeManagerDecision('send_back')">Send Back for Revision</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: GUIDELINE HEALTH -->
+    <section id="tabHealth" class="tab-content">
+      <div class="panel">
+        <div class="panel-header">Guideline Health & Dispute Tracker</div>
+        <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:1.5rem;">
+          Shows policies and facts that generate the highest volume of creator disputes, pointing to potential policy ambiguity.
+        </p>
+        <div id="guidelineHealthList"></div>
+      </div>
+    </section>
+
+    <!-- TAB 4: EVALUATION -->
+    <section id="tabEval" class="tab-content">
+      <div class="panel">
+        <div class="panel-header">
+          <span>Automated Benchmark Suite</span>
+          <button class="btn btn-primary" onclick="runEvaluation()">Run All 15 Test Drafts</button>
+        </div>
+        <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1.5rem;">
+          Runs all 15 test drafts through deterministic rules and retrieval claim verification. Misses and false alarms are recorded transparently.
+        </p>
+        <div id="evalLoading" style="display:none; margin-bottom:1rem; font-weight:600;">Evaluating test suite, please wait...</div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Draft Title</th>
+              <th>Channel</th>
+              <th>Errors Seeded</th>
+              <th>Found</th>
+              <th>Missed</th>
+              <th>False Alarms</th>
+            </tr>
+          </thead>
+          <tbody id="evalTableBody">
+            <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Click "Run All 15 Test Drafts" to run benchmark.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 5: ACTIVITY AUDIT LOG -->
+    <section id="tabAudit" class="tab-content">
+      <div class="panel">
+        <div class="panel-header">Chronological Audit Log</div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Actor Role</th>
+              <th>Action</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="auditTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 6: ABOUT -->
+    <section id="tabAbout" class="tab-content">
+      <div class="panel">
+        <div class="panel-header">About Brandwise</div>
+        <div style="font-size:0.95rem; line-height:1.7;">
+          <p style="margin-bottom:1rem;">
+            <strong>Brandwise</strong> is an editorial review engine providing strict three-state verification (<strong>SUPPORTED</strong>, <strong>CONTRADICTED</strong>, <strong>UNVERIFIABLE</strong>) against brand facts and compliance standards.
+          </p>
+          <ul style="margin-left:1.5rem; margin-bottom:1.5rem;">
+            <li><strong>Model:</strong> Google Gemini (REST endpoint via httpx)</li>
+            <li><strong>Retrieval:</strong> scikit-learn TF-IDF passage retrieval over Finwise brand documents</li>
+            <li><strong>Backend:</strong> Python 3.11, FastAPI, SQLAlchemy, SQLite</li>
+            <li><strong>Frontend:</strong> Single-file Vanilla HTML5/CSS3/JavaScript (Zero build step, zero external runtime JS libraries)</li>
+          </ul>
+          <p style="padding:1rem; background:var(--gold-light); border-left:4px solid var(--gold-accent); border-radius:3px;">
+            <em>Built with AI assistance (Google AI Studio) during the event.</em>
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Dispute Modal -->
+  <div id="disputeModal" class="modal-backdrop">
+    <div class="modal-box">
+      <h3 style="font-family:var(--font-serif); margin-bottom:0.75rem;">Dispute Finding</h3>
+      <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">
+        Explain why this claim or phrasing should be allowed. Your reason will be escalated to the Manager.
+      </p>
+      <input type="hidden" id="disputeFindingId" />
+      <textarea id="disputeReasonText" style="width:100%; height:90px; padding:0.5rem; border:1px solid var(--border-color); border-radius:4px; margin-bottom:1rem;" placeholder="e.g. This was explicitly approved by product marketing on March 15th..."></textarea>
+      <div style="display:flex; justify-content:flex-end; gap:0.5rem;">
+        <button class="btn btn-secondary" onclick="closeDisputeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitDispute()">Submit Dispute</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* State */
+    let activeSubmissionId = null;
+    let activeVersionId = null;
+    let currentFindings = [];
+    let currentRawText = "";
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function switchTab(tabName) {
+      const tabs = ["creator", "manager", "health", "eval", "audit", "about"];
+      tabs.forEach(t => {
+        const el = document.getElementById("tab" + t.charAt(0).toUpperCase() + t.slice(1));
+        const btn = document.getElementById("tabBtn" + t.charAt(0).toUpperCase() + t.slice(1));
+        if (el) el.classList.remove("active");
+        if (btn) btn.classList.remove("active");
+      });
+
+      const target = document.getElementById("tab" + tabName.charAt(0).toUpperCase() + tabName.slice(1));
+      const targetBtn = document.getElementById("tabBtn" + tabName.charAt(0).toUpperCase() + tabName.slice(1));
+      if (target) target.classList.add("active");
+      if (targetBtn) targetBtn.classList.add("active");
+
+      if (tabName === "manager") loadManagerQueue();
+      if (tabName === "health") loadGuidelineHealth();
+      if (tabName === "audit") loadAuditLogs();
+    }
+
+    function handleRoleChange(role) {
+      if (role === "manager") {
+        switchTab("manager");
+      } else {
+        switchTab("creator");
+      }
+    }
+
+    function updateCharCount() {
+      const text = document.getElementById("draftBody").value;
+      document.getElementById("charCount").innerText = text.length;
+    }
+
+    /* Pre-loaded examples */
+    function loadExample(num) {
+      if (num === 1) {
+        document.getElementById("draftTitle").value = "Clean Social Announcement";
+        document.getElementById("channelSelect").value = "twitter";
+        document.getElementById("draftBody").value = "Managing money should feel calm. Finwise launched in 2023 to bring clarity to your wallet with automated round-ups.";
+      } else if (num === 2) {
+        document.getElementById("draftTitle").value = "Contradicted Fact & Banned Terms";
+        document.getElementById("channelSelect").value = "twitter";
+        document.getElementById("draftBody").value = "Finwise launched in 2018 and offers cheap risk-free investing with guaranteed returns.";
+      } else if (num === 3) {
+        document.getElementById("draftTitle").value = "Unverifiable Claim Demo";
+        document.getElementById("channelSelect").value = "twitter";
+        document.getElementById("draftBody").value = "Trade over 45 decentralized tokens with zero network gas fees directly inside the Finwise wallet.";
+      }
+      updateCharCount();
+    }
+
+    /* Draft Submission & Verification */
+    async function submitDraftForReview() {
+      const title = document.getElementById("draftTitle").value.trim();
+      const channel = document.getElementById("channelSelect").value;
+      const text = document.getElementById("draftBody").value.trim();
+
+      if (!title || !text) {
+        alert("Please provide both a title and draft content.");
+        return;
+      }
+
+      const btn = document.getElementById("btnSubmitReview");
+      btn.disabled = true;
+      btn.innerText = "Analyzing...";
+
+      try {
+        const resp = await fetch("/api/review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, channel, text })
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json();
+          alert(err.detail || "Review failed");
+          return;
+        }
+
+        const data = await resp.json();
+        activeSubmissionId = data.submission_id;
+        activeVersionId = data.version_id;
+        currentFindings = data.findings;
+        currentRawText = data.text;
+
+        renderFindings(data.text, data.findings);
+        document.getElementById("btnResubmit").style.display = "inline-block";
+        document.getElementById("versionIndicator").innerText = "Version 1";
+      } catch (err) {
+        alert("An error occurred during verification.");
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "Analyze Content";
+      }
+    }
+
+    /* Render findings and side-by-side annotations */
+    function renderFindings(rawText, findings) {
+      document.getElementById("reviewResults").style.display = "grid";
+      document.getElementById("findingsCountBadge").innerText = `${findings.length} issue${findings.length === 1 ? '' : 's'}`;
+
+      const cardContainer = document.getElementById("findingsCardList");
+      cardContainer.innerHTML = "";
+
+      if (findings.length === 0) {
+        cardContainer.innerHTML = `<p style="color:var(--green-supported); font-weight:600; padding:1rem; background:var(--green-bg); border-radius:4px;">No issues detected. Content complies with brand guidelines.</p>`;
+        document.getElementById("annotatedContent").innerText = rawText;
+        return;
+      }
+
+      // Build right-hand finding cards
+      findings.forEach((f, idx) => {
+        const card = document.createElement("div");
+        card.className = "finding-card";
+        card.id = `finding-card-${idx}`;
+
+        let badgeClass = "verdict-contradicted";
+        let verdictLabel = escapeHtml(f.verdict);
+        if (f.verdict === "UNVERIFIABLE") {
+          badgeClass = "verdict-unverifiable";
+          verdictLabel = "UNVERIFIABLE";
+        } else if (f.verdict === "SUPPORTED") {
+          badgeClass = "verdict-supported";
+        }
+
+        let quoteHtml = "";
+        if (f.source_quote) {
+          quoteHtml = `<div class="source-quote-box">"${escapeHtml(f.source_quote)}" &mdash; <small>${escapeHtml(f.source_name || "")}</small></div>`;
+        } else if (f.verdict === "UNVERIFIABLE") {
+          quoteHtml = `<div class="source-quote-box" style="border-left-color:var(--amber-unverifiable); color:var(--amber-unverifiable);">No approved source covers this. Needs human review.</div>`;
+        }
+
+        let diffHtml = "";
+        if (f.suggestion && f.suggestion !== f.original_text) {
+          diffHtml = `
+            <div class="diff-box">
+              <span class="diff-before">${escapeHtml(f.original_text)}</span>
+              <span class="diff-after">&rarr; ${escapeHtml(f.suggestion)}</span>
+            </div>
+          `;
+        }
+
+        const confPct = Math.round((f.confidence || 1.0) * 100);
+
+        card.innerHTML = `
+          <div class="card-top">
+            <span class="verdict-badge ${badgeClass}">${verdictLabel}</span>
+            <span style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">${escapeHtml(f.severity)} severity</span>
+          </div>
+          <p style="font-size:0.88rem; margin:0.3rem 0;"><strong>Issue:</strong> ${escapeHtml(f.reason)}</p>
+          ${quoteHtml}
+          ${diffHtml}
+          <div style="font-size:0.75rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:0.4rem;">
+            <span>Source Confidence</span>
+            <span>${confPct}%</span>
+          </div>
+          <div class="confidence-bar-bg">
+            <div class="confidence-fill" style="width: ${confPct}%"></div>
+          </div>
+          <div class="card-actions">
+            ${f.suggestion ? `<button class="btn btn-accept" onclick="acceptSuggestion(${idx})">Accept Fix</button>` : ''}
+            <button class="btn btn-dispute" onclick="openDisputeModal(${f.id || idx})">Dispute</button>
+          </div>
+        `;
+
+        cardContainer.appendChild(card);
+      });
+
+      // Highlight occurrences in text
+      let htmlAnnotated = escapeHtml(rawText);
+      findings.forEach((f, idx) => {
+        if (!f.original_text) return;
+        const escapedOrig = escapeHtml(f.original_text);
+        let hlClass = "hl-contradicted";
+        if (f.verdict === "UNVERIFIABLE") hlClass = "hl-unverifiable";
+        else if (f.category.includes("preferred") || f.category.includes("channel")) hlClass = "hl-rule";
+
+        const replacement = `<span class="${hlClass}" onclick="scrollToCard(${idx})">${escapedOrig}</span>`;
+        htmlAnnotated = htmlAnnotated.replace(escapedOrig, replacement);
+      });
+
+      document.getElementById("annotatedContent").innerHTML = htmlAnnotated;
+    }
+
+    function scrollToCard(idx) {
+      document.querySelectorAll(".finding-card").forEach(c => c.classList.remove("active-target"));
+      const card = document.getElementById(`finding-card-${idx}`);
+      if (card) {
+        card.classList.add("active-target");
+        card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+
+    function acceptSuggestion(idx) {
+      const finding = currentFindings[idx];
+      if (!finding || !finding.suggestion) return;
+
+      const textarea = document.getElementById("draftBody");
+      textarea.value = textarea.value.replace(finding.original_text, finding.suggestion);
+      updateCharCount();
+
+      // Remove this finding from list and re-render
+      currentFindings.splice(idx, 1);
+      renderFindings(textarea.value, currentFindings);
+    }
+
+    /* Resubmit edited version */
+    async function resubmitActiveDraft() {
+      if (!activeSubmissionId) return;
+      const text = document.getElementById("draftBody").value.trim();
+
+      const resp = await fetch(`/api/submission/${activeSubmissionId}/resubmit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        activeVersionId = data.version_id;
+        document.getElementById("versionIndicator").innerText = `Version ${data.version_number}`;
+        // Re-fetch submission details to load updated findings
+        loadSubmissionDetails(activeSubmissionId);
+        alert(`Version ${data.version_number} saved and submitted to review.`);
+      }
+    }
+    async function loadSubmissionDetails(subId) {
+      const resp = await fetch(`/api/submission/${subId}`);
+      const data = await resp.json();
+      currentFindings = data.findings;
+      currentRawText = data.text;
+      renderFindings(data.text, data.findings);
+    }
+    /* Dispute modal logic */
+    function openDisputeModal(findingId) {
+      document.getElementById("disputeFindingId").value = findingId;
+      document.getElementById("disputeReasonText").value = "";
+      document.getElementById("disputeModal").style.display = "flex";
+    }
+
+    function closeDisputeModal() {
+      document.getElementById("disputeModal").style.display = "none";
+    }
+
+    async function submitDispute() {
+      const findingId = document.getElementById("disputeFindingId").value;
+      const reason = document.getElementById("disputeReasonText").value.trim();
+      if (!reason) {
+        alert("Please state your dispute reason.");
+        return;
+      }
+
+      await fetch(`/api/findings/${findingId}/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "disputed", dispute_reason: reason })
+      });
+
+      closeDisputeModal();
+      alert("Finding marked as disputed. Sent to Manager queue.");
+    }
+
+    /* Manager Queue */
+    async function loadManagerQueue() {
+      const resp = await fetch("/api/queue");
+      const queue = await resp.json();
+      const tbody = document.getElementById("queueTableBody");
+      tbody.innerHTML = "";
+
+      if (queue.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Queue is empty.</td></tr>`;
+        return;
+      }
+
+      queue.forEach(item => {
+        const tr = document.createElement("tr");
+        const riskBadge = item.risk_level === "High Risk" ? "badge-risk-high" : "badge-risk-low";
+        tr.innerHTML = `
+          <td><strong>${escapeHtml(item.title)}</strong></td>
+          <td>${escapeHtml(item.channel)}</td>
+          <td><span class="${riskBadge}">${escapeHtml(item.risk_level)}</span></td>
+          <td>${item.findings_count}</td>
+          <td>${item.disputed_count > 0 ? `<strong style="color:var(--amber-unverifiable);">${item.disputed_count}</strong>` : '0'}</td>
+          <td>${escapeHtml(item.status)}</td>
+          <td>
+            <button class="btn btn-secondary" onclick="loadSubmissionForManager(${item.id})">Review</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function loadSubmissionForManager(subId) {
+      activeSubmissionId = subId;
+      const resp = await fetch(`/api/submission/${subId}`);
+      const data = await resp.json();
+
+      document.getElementById("managerReviewPane").style.display = "block";
+      document.getElementById("managerDraftTitle").innerText = `${data.title} (v${data.version_number})`;
+      document.getElementById("managerDraftStatus").innerText = data.status;
+      document.getElementById("managerDraftText").innerText = data.text;
+
+      const findingsContainer = document.getElementById("managerFindingsList");
+      findingsContainer.innerHTML = "";
+
+      if (data.findings.length === 0) {
+        findingsContainer.innerHTML = `<p style="color:var(--green-supported); padding:0.5rem 0;">No active issues on this version.</p>`;
+      } else {
+        data.findings.forEach(f => {
+          const item = document.createElement("div");
+          item.style = "padding:0.75rem; border:1px solid var(--border-color); border-radius:4px; margin-bottom:0.5rem; background:var(--bg-paper);";
+          item.innerHTML = `
+            <div style="display:flex; justify-content:space-between; margin-bottom:0.25rem;">
+              <strong style="font-size:0.85rem;">${escapeHtml(f.verdict)} - ${escapeHtml(f.category)}</strong>
+              <span style="font-size:0.75rem; font-weight:600;">Status: ${escapeHtml(f.status)}</span>
+            </div>
+            <p style="font-size:0.85rem;">${escapeHtml(f.reason)}</p>
+            ${f.dispute_reason ? `<div style="margin-top:0.3rem; padding:0.4rem; background:#FEF3C7; font-size:0.8rem; border-radius:3px;"><strong>Creator Dispute:</strong> ${escapeHtml(f.dispute_reason)}</div>` : ''}
+          `;
+          findingsContainer.appendChild(item);
+        });
+      }
+
+      document.getElementById("managerReviewPane").scrollIntoView({ behavior: "smooth" });
+    }
+
+    async function makeManagerDecision(decisionType) {
+      if (!activeSubmissionId) return;
+      const comment = document.getElementById("managerComment").value.trim();
+
+      const resp = await fetch(`/api/submission/${activeSubmissionId}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actor_role: "Manager",
+          action_type: decisionType,
+          comment: comment
+        })
+      });
+
+      if (resp.ok) {
+        alert(`Draft has been ${decisionType === 'approve' ? 'approved' : 'sent back for revision'}.`);
+        document.getElementById("managerReviewPane").style.display = "none";
+        loadManagerQueue();
+      }
+    }
+
+    /* Guideline Health Tab */
+    async function loadGuidelineHealth() {
+      const resp = await fetch("/api/health_analytics");
+      const list = await resp.json();
+      const container = document.getElementById("guidelineHealthList");
+      container.innerHTML = "";
+
+      if (list.length === 0) {
+        container.innerHTML = `<p style="color:var(--text-muted);">No policy disputes logged yet.</p>`;
+        return;
+      }
+
+      list.forEach(item => {
+        const div = document.createElement("div");
+        div.style = "padding:1rem; border:1px solid var(--border-color); border-radius:6px; margin-bottom:1rem; background:var(--bg-surface);";
+
+        let examplesHtml = "";
+        item.examples.forEach(ex => {
+          examplesHtml += `
+            <li style="margin-bottom:0.4rem;">
+              <em>"${escapeHtml(ex.original_text)}"</em> &mdash; Reason: ${escapeHtml(ex.reason)}
+            </li>
+          `;
+        });
+
+        div.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+            <strong style="font-size:1.05rem;">${escapeHtml(item.rule)}</strong>
+            <span class="badge-risk-high">${item.dispute_count} dispute${item.dispute_count === 1 ? '' : 's'}</span>
+          </div>
+          <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.5rem;">Recent creator dispute rationale:</p>
+          <ul style="font-size:0.85rem; margin-left:1.5rem;">${examplesHtml}</ul>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    /* Evaluation Benchmark Suite */
+    async function runEvaluation() {
+      const loading = document.getElementById("evalLoading");
+      loading.style.display = "block";
+      const tbody = document.getElementById("evalTableBody");
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Running test suite...</td></tr>`;
+
+      try {
+        const resp = await fetch("/api/evaluate");
+        const results = await resp.json();
+        tbody.innerHTML = "";
+
+        results.forEach(r => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td><code>${escapeHtml(r.id)}</code></td>
+            <td><strong>${escapeHtml(r.title)}</strong></td>
+            <td>${escapeHtml(r.channel)}</td>
+            <td>${r.seeded_count}</td>
+            <td style="color:var(--green-supported); font-weight:600;">${r.found_count}</td>
+            <td style="${r.missed_count > 0 ? 'color:var(--red-contradicted); font-weight:600;' : 'color:var(--text-muted);'}">${r.missed_count}</td>
+            <td>${r.false_alarms}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--red-contradicted);">Evaluation failed.</td></tr>`;
+      } finally {
+        loading.style.display = "none";
+      }
+    }
+
+    /* Activity Audit Log */
+    async function loadAuditLogs() {
+      const resp = await fetch("/api/audit_logs");
+      const logs = await resp.json();
+      const tbody = document.getElementById("auditTableBody");
+      tbody.innerHTML = "";
+
+      if (logs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">No activity logged yet.</td></tr>`;
+        return;
+      }
+
+      logs.forEach(l => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td style="white-space:nowrap; font-size:0.82rem; color:var(--text-muted);">${escapeHtml(l.timestamp)}</td>
+          <td><strong>${escapeHtml(l.actor_role)}</strong></td>
+          <td>${escapeHtml(l.action)}</td>
+          <td style="font-size:0.85rem;">${escapeHtml(l.details || "")}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Initialize character counter on page load
+    updateCharCount();
+  </script>
+</body>
+</html>

@@ -2,6 +2,7 @@
 import os
 import json
 import re
+import asyncio
 import httpx
 from dotenv import load_dotenv
 
@@ -10,6 +11,9 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+
+# HTTP codes that usually mean "busy right now, try again"
+RETRY_CODES = (429, 500, 503)
 
 
 def normalize_string(s: str) -> str:
@@ -89,12 +93,22 @@ async def verify_claim_with_gemini(claim: str, retrieved_passages: list) -> dict
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = None
+            # Try up to 3 times when Google reports it is busy
+            for attempt in range(3):
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code not in RETRY_CODES:
+                    break
+                await asyncio.sleep(2 * (attempt + 1))
+
             if resp.status_code != 200:
+                if resp.status_code in RETRY_CODES:
+                    note = "Google's service is busy right now. Try again in a minute."
+                else:
+                    note = "Check the API key and model name."
                 return make_fallback(
                     claim,
-                    f"Automated check unavailable (Gemini returned HTTP {resp.status_code}). "
-                    "Check the API key and model name."
+                    f"Automated check unavailable (Gemini returned HTTP {resp.status_code}). {note}"
                 )
 
             data = resp.json()

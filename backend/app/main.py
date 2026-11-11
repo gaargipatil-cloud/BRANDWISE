@@ -2,11 +2,11 @@
 import os
 import json
 import time
+import asyncio
 from collections import defaultdict
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -23,9 +23,18 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Brandwise API", version="1.0.0")
 
-# Security rate limiter in memory: 20 per IP per hour, 300 global per day
+MAX_TEXT_CHARS = 3000      # drafts are cut to this length
+MAX_CLAIMS = 5             # at most this many claims per draft go to the AI
+EVAL_CACHE_SECONDS = 1800  # Evaluation results are reused for 30 minutes
+
+# In-memory rate limiter: 20 reviews per IP per hour, 300 per day overall
 IP_REQUEST_LOGS = defaultdict(list)
 GLOBAL_REQUEST_LOGS = []
+
+# Cache and lock for the Evaluation tab
+EVAL_CACHE = {"time": 0.0, "data": None}
+EVAL_LOCK = asyncio.Lock()
+
 
 def get_client_ip(request: Request) -> str:
     """Use the real visitor IP when running behind a proxy such as Render."""
@@ -34,15 +43,15 @@ def get_client_ip(request: Request) -> str:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "127.0.0.1"
 
+
 def enforce_rate_limits(client_ip: str):
     """Enforce 20 req/hour per IP and 300 req/day globally."""
+    global GLOBAL_REQUEST_LOGS
     now = time.time()
     one_hour_ago = now - 3600
     one_day_ago = now - 86400
 
-    # Prune old timestamps
     IP_REQUEST_LOGS[client_ip] = [t for t in IP_REQUEST_LOGS[client_ip] if t > one_hour_ago]
-    global GLOBAL_REQUEST_LOGS
     GLOBAL_REQUEST_LOGS = [t for t in GLOBAL_REQUEST_LOGS if t > one_day_ago]
 
     if len(GLOBAL_REQUEST_LOGS) >= 300:
@@ -65,11 +74,11 @@ def on_startup():
         db.close()
 
 
-# Pydantic request models
+# ---------- Request models ----------
 class ReviewRequest(BaseModel):
     title: str = Field(..., max_length=200)
     channel: str = Field(..., max_length=50)
-    text: str = Field(..., max_length=3000)
+    text: str = Field(..., max_length=20000)
 
 
 class FindingUpdate(BaseModel):
@@ -84,80 +93,56 @@ class DecisionRequest(BaseModel):
 
 
 class ResubmitRequest(BaseModel):
-    text: str = Field(..., max_length=3000)
+    text: str = Field(..., max_length=20000)
 
 
-@app.get("/health")
-def health():
-    """Health check endpoint for Render and status monitors."""
-    return {"status": "ok", "app": "Brandwise", "timestamp": time.time()}
+# ---------- Shared helpers ----------
+async def check_claims(text: str, channel: str) -> list:
+    """Find claim sentences, verify each against the brand pack, return findings.
+
+    Claims are checked in parallel (3 at a time) to keep reviews fast.
+    """
+    claims = extract_claims(text)[:MAX_CLAIMS]
+    semaphore = asyncio.Semaphore(3)
+
+    async def verify_one(claim: str):
+        async with semaphore:
+            passages = retrieve_top_passages(claim, top_k=3)
+            return claim, await verify_claim_with_gemini(claim, passages)
+
+    results = await asyncio.gather(*[verify_one(c) for c in claims])
+
+    findings = []
+    for claim, res in results:
+        if res["verdict"] not in ("CONTRADICTED", "UNVERIFIABLE"):
+            continue
+
+        # Discard a suggested fix if it would create a new rule violation
+        suggestion = res.get("suggestion", "") or ""
+        if suggestion and check_rules(suggestion, channel):
+            suggestion = ""
+
+        findings.append({
+            "category": "claim_verification",
+            "severity": "high" if res["verdict"] == "CONTRADICTED" else "medium",
+            "original_text": claim,
+            "verdict": res["verdict"],
+            "reason": res["reason"],
+            "source_name": res["source_name"],
+            "source_quote": res["source_quote"],
+            "suggestion": suggestion,
+            "confidence": res["confidence"],
+            "status": "open"
+        })
+    return findings
 
 
-@app.post("/api/review")
-async def review_content(payload: ReviewRequest, request: Request, db: Session = Depends(get_db)):
-    """Run full review pipeline: rules -> claims -> TF-IDF -> LLM verification -> safe fix."""
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    enforce_rate_limits(client_ip)
-
-    # 1. Truncate text strictly to 3000 chars
-    clean_text = payload.text[:3000].strip()
-
-    # 2. Run deterministic rule checks
-    findings_data = check_rules(clean_text, payload.channel)
-
-    # 3. Detect factual claims
-    claim_sentences = extract_claims(clean_text)
-
-    # 4. Verify each claim with TF-IDF retrieval + Gemini LLM
-    for claim in claim_sentences:
-        passages = retrieve_top_passages(claim, top_k=3)
-        res = await verify_claim_with_gemini(claim, passages)
-
-        if res["verdict"] in ["CONTRADICTED", "UNVERIFIABLE"]:
-            # Check if suggestion creates any new rule violation
-            suggestion = res.get("suggestion", "")
-            if suggestion:
-                new_issues = check_rules(suggestion, payload.channel)
-                if new_issues:
-                    suggestion = ""
-
-            severity = "high" if res["verdict"] == "CONTRADICTED" else "medium"
-            findings_data.append({
-                "category": "claim_verification",
-                "severity": severity,
-                "original_text": claim,
-                "verdict": res["verdict"],
-                "reason": res["reason"],
-                "source_name": res["source_name"],
-                "source_quote": res["source_quote"],
-                "suggestion": suggestion,
-                "confidence": res["confidence"],
-                "status": "open"
-            })
-
-    # Save submission and first version to database
-    submission = Submission(
-        title=payload.title,
-        channel=payload.channel,
-        status="pending_review"
-    )
-    db.add(submission)
-    db.commit()
-    db.refresh(submission)
-
-    version = Version(
-        submission_id=submission.id,
-        version_number=1,
-        text=clean_text
-    )
-    db.add(version)
-    db.commit()
-    db.refresh(version)
-
-    saved_findings = []
+def save_findings(db: Session, version_id: int, findings_data: list) -> list:
+    """Save findings for a version and return them with their database IDs."""
+    saved = []
     for item in findings_data:
         f = Finding(
-            version_id=version.id,
+            version_id=version_id,
             category=item["category"],
             severity=item["severity"],
             original_text=item["original_text"],
@@ -170,15 +155,47 @@ async def review_content(payload: ReviewRequest, request: Request, db: Session =
             status="open"
         )
         db.add(f)
-        db.flush()
-        saved_findings.append({**item, "id": f.id})
+        db.flush()  # assigns f.id without committing yet
+        saved.append({**item, "id": f.id})
+    return saved
 
-    log = AuditLog(
+
+# ---------- Endpoints ----------
+@app.get("/health")
+def health():
+    """Health check endpoint for Render and status monitors."""
+    return {"status": "ok", "app": "Brandwise", "timestamp": time.time()}
+
+
+@app.post("/api/review")
+async def review_content(payload: ReviewRequest, request: Request, db: Session = Depends(get_db)):
+    """Run full review pipeline: rules -> claims -> retrieval -> LLM verification -> safe fix."""
+    enforce_rate_limits(get_client_ip(request))
+
+    clean_text = payload.text[:MAX_TEXT_CHARS].strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Draft text is empty.")
+
+    findings_data = check_rules(clean_text, payload.channel)
+    findings_data += await check_claims(clean_text, payload.channel)
+
+    submission = Submission(title=payload.title, channel=payload.channel, status="pending_review")
+    db.add(submission)
+    db.commit()
+    db.refresh(submission)
+
+    version = Version(submission_id=submission.id, version_number=1, text=clean_text)
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    saved_findings = save_findings(db, version.id, findings_data)
+
+    db.add(AuditLog(
         actor_role="Creator",
         action="Analyzed draft",
-        details=f"Draft '{submission.title}' scanned: {len(findings_data)} findings generated."
-    )
-    db.add(log)
+        details=f"Draft '{submission.title}' scanned: {len(saved_findings)} findings generated."
+    ))
     db.commit()
 
     return {
@@ -198,14 +215,13 @@ def get_manager_queue(db: Session = Depends(get_db)):
     queue = []
 
     for sub in submissions:
-        latest_ver = db.query(Version).filter(Version.submission_id == sub.id).order_by(Version.version_number.desc()).first()
+        latest_ver = (db.query(Version).filter(Version.submission_id == sub.id)
+                      .order_by(Version.version_number.desc()).first())
         if not latest_ver:
             continue
         findings = db.query(Finding).filter(Finding.version_id == latest_ver.id).all()
 
         is_high_risk = any(f.severity == "high" or f.verdict == "UNVERIFIABLE" for f in findings)
-        risk_level = "High Risk" if is_high_risk else "Low Risk"
-
         disputed_count = sum(1 for f in findings if f.status == "disputed")
 
         queue.append({
@@ -215,31 +231,32 @@ def get_manager_queue(db: Session = Depends(get_db)):
             "status": sub.status,
             "version_number": latest_ver.version_number,
             "version_id": latest_ver.id,
-            "risk_level": risk_level,
+            "risk_level": "High Risk" if is_high_risk else "Low Risk",
             "findings_count": len(findings),
             "disputed_count": disputed_count,
             "created_at": sub.created_at.isoformat()
         })
 
-    # Sort so High Risk entries are at top of queue
+    # High Risk first, then pending items before decided ones
     queue.sort(key=lambda x: (0 if x["risk_level"] == "High Risk" else 1, x["status"] != "pending_review"))
     return queue
 
 
 @app.get("/api/submission/{sub_id}")
 def get_submission_detail(sub_id: int, db: Session = Depends(get_db)):
-    """Fetch complete history, latest version text, and findings for a draft."""
+    """Fetch the latest version text, findings and manager actions for a draft."""
     sub = db.query(Submission).filter(Submission.id == sub_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
 
-    versions = db.query(Version).filter(Version.submission_id == sub.id).order_by(Version.version_number.asc()).all()
+    versions = (db.query(Version).filter(Version.submission_id == sub.id)
+                .order_by(Version.version_number.asc()).all())
     latest_ver = versions[-1] if versions else None
 
     findings = []
+    actions = []
     if latest_ver:
-        findings_query = db.query(Finding).filter(Finding.version_id == latest_ver.id).all()
-        for f in findings_query:
+        for f in db.query(Finding).filter(Finding.version_id == latest_ver.id).all():
             findings.append({
                 "id": f.id,
                 "category": f.category,
@@ -254,11 +271,7 @@ def get_submission_detail(sub_id: int, db: Session = Depends(get_db)):
                 "status": f.status,
                 "dispute_reason": f.dispute_reason
             })
-
-    actions = []
-    if latest_ver:
-        actions_query = db.query(Action).filter(Action.version_id == latest_ver.id).all()
-        for a in actions_query:
+        for a in db.query(Action).filter(Action.version_id == latest_ver.id).all():
             actions.append({
                 "id": a.id,
                 "actor_role": a.actor_role,
@@ -292,12 +305,11 @@ def update_finding_status(finding_id: int, payload: FindingUpdate, db: Session =
         finding.dispute_reason = payload.dispute_reason
     db.commit()
 
-    log = AuditLog(
+    db.add(AuditLog(
         actor_role="Creator",
         action=f"Updated finding {finding.id}",
         details=f"Marked as {payload.status}. Reason: {payload.dispute_reason or 'None'}"
-    )
-    db.add(log)
+    ))
     db.commit()
     return {"status": "ok", "finding_id": finding.id, "new_status": finding.status}
 
@@ -305,70 +317,35 @@ def update_finding_status(finding_id: int, payload: FindingUpdate, db: Session =
 @app.post("/api/submission/{sub_id}/resubmit")
 async def resubmit_version(sub_id: int, payload: ResubmitRequest, request: Request, db: Session = Depends(get_db)):
     """Save an edited draft as a new version and rerun verification."""
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    enforce_rate_limits(client_ip)
+    enforce_rate_limits(get_client_ip(request))
 
     sub = db.query(Submission).filter(Submission.id == sub_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
 
-    clean_text = payload.text[:3000].strip()
-    latest_ver = db.query(Version).filter(Version.submission_id == sub.id).order_by(Version.version_number.desc()).first()
+    clean_text = payload.text[:MAX_TEXT_CHARS].strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Draft text is empty.")
+
+    latest_ver = (db.query(Version).filter(Version.submission_id == sub.id)
+                  .order_by(Version.version_number.desc()).first())
     new_ver_num = (latest_ver.version_number + 1) if latest_ver else 1
 
-    new_version = Version(
-        submission_id=sub.id,
-        version_number=new_ver_num,
-        text=clean_text
-    )
+    new_version = Version(submission_id=sub.id, version_number=new_ver_num, text=clean_text)
     db.add(new_version)
     db.commit()
     db.refresh(new_version)
 
-    # Re-run rule engine and claims pipeline on new version
     findings_data = check_rules(clean_text, sub.channel)
-    claim_sentences = extract_claims(clean_text)
-
-    for claim in claim_sentences:
-        passages = retrieve_top_passages(claim, top_k=3)
-        res = await verify_claim_with_gemini(claim, passages)
-        if res["verdict"] in ["CONTRADICTED", "UNVERIFIABLE"]:
-            findings_data.append({
-                "category": "claim_verification",
-                "severity": "high" if res["verdict"] == "CONTRADICTED" else "medium",
-                "original_text": claim,
-                "verdict": res["verdict"],
-                "reason": res["reason"],
-                "source_name": res["source_name"],
-                "source_quote": res["source_quote"],
-                "suggestion": res.get("suggestion", ""),
-                "confidence": res["confidence"],
-                "status": "open"
-            })
-
-    for item in findings_data:
-        f = Finding(
-            version_id=new_version.id,
-            category=item["category"],
-            severity=item["severity"],
-            original_text=item["original_text"],
-            verdict=item["verdict"],
-            reason=item["reason"],
-            source_name=item.get("source_name"),
-            source_quote=item.get("source_quote"),
-            suggestion=item.get("suggestion"),
-            confidence=item.get("confidence", 1.0),
-            status="open"
-        )
-        db.add(f)
+    findings_data += await check_claims(clean_text, sub.channel)
+    saved_findings = save_findings(db, new_version.id, findings_data)
 
     sub.status = "pending_review"
-    log = AuditLog(
+    db.add(AuditLog(
         actor_role="Creator",
         action=f"Created Version {new_ver_num}",
-        details=f"Draft resubmitted with {len(findings_data)} remaining findings."
-    )
-    db.add(log)
+        details=f"Draft resubmitted with {len(saved_findings)} remaining findings."
+    ))
     db.commit()
 
     return {"status": "ok", "version_id": new_version.id, "version_number": new_ver_num}
@@ -381,27 +358,25 @@ def manager_decision(sub_id: int, payload: DecisionRequest, db: Session = Depend
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
 
-    latest_ver = db.query(Version).filter(Version.submission_id == sub.id).order_by(Version.version_number.desc()).first()
+    latest_ver = (db.query(Version).filter(Version.submission_id == sub.id)
+                  .order_by(Version.version_number.desc()).first())
     if not latest_ver:
         raise HTTPException(status_code=400, detail="No version exists for this draft")
 
-    action = Action(
+    db.add(Action(
         version_id=latest_ver.id,
         actor_role=payload.actor_role,
         action_type=payload.action_type,
         comment=payload.comment
-    )
-    db.add(action)
-
+    ))
     sub.status = "approved" if payload.action_type == "approve" else "sent_back"
     db.commit()
 
-    log = AuditLog(
+    db.add(AuditLog(
         actor_role=payload.actor_role,
         action=f"{payload.action_type.capitalize()} draft",
         details=f"Draft '{sub.title}' status changed to {sub.status}. Note: {payload.comment or 'None'}"
-    )
-    db.add(log)
+    ))
     db.commit()
 
     return {"status": "ok", "submission_status": sub.status}
@@ -422,14 +397,7 @@ def guideline_health(db: Session = Depends(get_db)):
                 "reason": f.dispute_reason or "No dispute reason provided"
             })
 
-    output = []
-    for k, v in stats.items():
-        output.append({
-            "rule": k,
-            "dispute_count": v["count"],
-            "examples": v["examples"]
-        })
-
+    output = [{"rule": k, "dispute_count": v["count"], "examples": v["examples"]} for k, v in stats.items()]
     output.sort(key=lambda x: x["dispute_count"], reverse=True)
     return output
 
@@ -449,51 +417,56 @@ def get_audit_logs(db: Session = Depends(get_db)):
 
 @app.get("/api/evaluate")
 async def evaluate_test_drafts():
-    """Run all 15 test drafts through pipeline and return accuracy/evaluation breakdown."""
-    drafts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "test_drafts", "drafts.json"))
+    """Run all test drafts through the pipeline and return a seeded-vs-found breakdown.
+
+    Results are cached for 30 minutes so visitors cannot use up the AI quota.
+    The counts are approximate: they compare totals, not individual error types.
+    """
+    if EVAL_CACHE["data"] is not None and time.time() - EVAL_CACHE["time"] < EVAL_CACHE_SECONDS:
+        return EVAL_CACHE["data"]
+
+    drafts_path = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), "..", "..", "data", "test_drafts", "drafts.json"))
     if not os.path.exists(drafts_path):
-        return {"error": "Test drafts not found"}
+        raise HTTPException(status_code=404, detail="Test drafts not found")
 
-    with open(drafts_path, "r", encoding="utf-8") as f:
-        drafts = json.load(f)
+    async with EVAL_LOCK:
+        # Another visitor may have finished the run while we waited
+        if EVAL_CACHE["data"] is not None and time.time() - EVAL_CACHE["time"] < EVAL_CACHE_SECONDS:
+            return EVAL_CACHE["data"]
 
-    results = []
-    for d in drafts:
-        # Run rule checks
-        rule_findings = check_rules(d["text"], d["channel"])
-        claims = extract_claims(d["text"])
-        llm_findings = []
-        for c in claims:
-            passages = retrieve_top_passages(c, top_k=3)
-            res = await verify_claim_with_gemini(c, passages)
-            if res["verdict"] in ["CONTRADICTED", "UNVERIFIABLE"]:
-                llm_findings.append(res)
+        with open(drafts_path, "r", encoding="utf-8") as f:
+            drafts = json.load(f)
 
-        total_found = len(rule_findings) + len(llm_findings)
-        seeded_count = len(d["seeded_errors"])
+        results = []
+        for d in drafts:
+            rule_findings = check_rules(d["text"], d["channel"])
+            claim_findings = await check_claims(d["text"], d["channel"])
 
-        # Determine missed errors honestly
-        missed = max(0, seeded_count - total_found)
-        false_alarms = max(0, total_found - seeded_count)
+            total_found = len(rule_findings) + len(claim_findings)
+            seeded_count = len(d["seeded_errors"])
 
-        results.append({
-            "id": d["id"],
-            "title": d["title"],
-            "channel": d["channel"],
-            "seeded_count": seeded_count,
-            "seeded_errors": d["seeded_errors"],
-            "found_count": total_found,
-            "false_alarms": false_alarms,
-            "missed_count": missed
-        })
+            results.append({
+                "id": d["id"],
+                "title": d["title"],
+                "channel": d["channel"],
+                "seeded_count": seeded_count,
+                "seeded_errors": d["seeded_errors"],
+                "found_count": total_found,
+                "false_alarms": max(0, total_found - seeded_count),
+                "missed_count": max(0, seeded_count - total_found)
+            })
 
-    return results
+        EVAL_CACHE["data"] = results
+        EVAL_CACHE["time"] = time.time()
+        return results
 
 
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
     """Serve the single-file frontend HTML."""
-    frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "index.html"))
+    frontend_path = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), "..", "..", "frontend", "index.html"))
     if not os.path.exists(frontend_path):
         return HTMLResponse("<h1>Frontend index.html not found</h1>", status_code=404)
     with open(frontend_path, "r", encoding="utf-8") as f:

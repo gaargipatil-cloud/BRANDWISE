@@ -298,6 +298,14 @@
       border-radius: 2px;
     }
 
+        .hl-supported {
+      background-color: #DCFCE7;
+      border-bottom: 2px solid var(--green-supported);
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+
     /* Finding card right column */
     .finding-card {
       border: 1px solid var(--border-color);
@@ -640,7 +648,7 @@
           <ul style="margin-left:1.5rem; margin-bottom:1.5rem;">
             <li><strong>Model:</strong> Google Gemini (REST endpoint via httpx)</li>
             <li><strong>Retrieval:</strong> scikit-learn TF-IDF passage retrieval over Finwise brand documents</li>
-            <li><strong>Backend:</strong> Python 3.11, FastAPI, SQLAlchemy, SQLite</li>
+            <li><strong>Backend:</strong> Python 3.12, FastAPI, SQLAlchemy, SQLite</li>
             <li><strong>Frontend:</strong> Single-file Vanilla HTML5/CSS3/JavaScript (Zero build step, zero external runtime JS libraries)</li>
           </ul>
           <p style="padding:1rem; background:var(--gold-light); border-left:4px solid var(--gold-accent); border-radius:3px;">
@@ -782,7 +790,9 @@
     /* Render findings and side-by-side annotations */
     function renderFindings(rawText, findings) {
       document.getElementById("reviewResults").style.display = "grid";
-      document.getElementById("findingsCountBadge").innerText = `${findings.length} issue${findings.length === 1 ? '' : 's'}`;
+            const issueCount = findings.filter(f => f.verdict !== "SUPPORTED").length;
+      const passedCount = findings.length - issueCount;
+      document.getElementById("findingsCountBadge").innerText = `${issueCount} issue${issueCount === 1 ? '' : 's'}, ${passedCount} claim${passedCount === 1 ? '' : 's'} passed`;
 
       const cardContainer = document.getElementById("findingsCardList");
       cardContainer.innerHTML = "";
@@ -857,8 +867,11 @@
         if (!f.original_text) return;
         const escapedOrig = escapeHtml(f.original_text);
         let hlClass = "hl-contradicted";
-        if (f.verdict === "UNVERIFIABLE") hlClass = "hl-unverifiable";
+
+                if (f.verdict === "UNVERIFIABLE") hlClass = "hl-unverifiable";
+        else if (f.verdict === "SUPPORTED") hlClass = "hl-supported";
         else if (f.category.includes("preferred") || f.category.includes("channel")) hlClass = "hl-rule";
+        
 
         const replacement = `<span class="${hlClass}" onclick="scrollToCard(${idx})">${escapedOrig}</span>`;
         htmlAnnotated = htmlAnnotated.replace(escapedOrig, replacement);

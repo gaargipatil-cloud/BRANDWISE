@@ -3,7 +3,7 @@ import os
 import json
 import time
 import asyncio
-from collections import defaultdict
+from collections import defaultdict, Counter
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -21,7 +21,7 @@ from .seed import seed_database
 # Initialize database schema
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Brandwise API", version="1.0.0")
+app = FastAPI(title="Brandwise API", version="1.1.0")
 
 MAX_TEXT_CHARS = 3000      # drafts are cut to this length
 MAX_CLAIMS = 5             # at most this many claims per draft go to the AI
@@ -101,6 +101,7 @@ async def check_claims(text: str, channel: str) -> list:
     """Find claim sentences, verify each against the brand pack, return findings.
 
     Claims are checked in parallel (3 at a time) to keep reviews fast.
+    A claim that matches an approved source is returned as a SUPPORTED (passed) item.
     """
     claims = extract_claims(text)[:MAX_CLAIMS]
     semaphore = asyncio.Semaphore(3)
@@ -114,6 +115,22 @@ async def check_claims(text: str, channel: str) -> list:
 
     findings = []
     for claim, res in results:
+        if res["verdict"] == "SUPPORTED":
+            # A claim that matches an approved source: show it as passed
+            findings.append({
+                "category": "claim_verification",
+                "severity": "info",
+                "original_text": claim,
+                "verdict": "SUPPORTED",
+                "reason": res["reason"],
+                "source_name": res["source_name"],
+                "source_quote": res["source_quote"],
+                "suggestion": "",
+                "confidence": res["confidence"],
+                "status": "passed"
+            })
+            continue
+
         if res["verdict"] not in ("CONTRADICTED", "UNVERIFIABLE"):
             continue
 
@@ -152,12 +169,17 @@ def save_findings(db: Session, version_id: int, findings_data: list) -> list:
             source_quote=item.get("source_quote"),
             suggestion=item.get("suggestion"),
             confidence=item.get("confidence", 1.0),
-            status="open"
+            status=item.get("status", "open")
         )
         db.add(f)
         db.flush()  # assigns f.id without committing yet
         saved.append({**item, "id": f.id})
     return saved
+
+
+def count_issues(findings_data: list) -> int:
+    """Number of real issues, not counting claims that passed."""
+    return sum(1 for f in findings_data if f.get("verdict") != "SUPPORTED")
 
 
 # ---------- Endpoints ----------
@@ -194,7 +216,8 @@ async def review_content(payload: ReviewRequest, request: Request, db: Session =
     db.add(AuditLog(
         actor_role="Creator",
         action="Analyzed draft",
-        details=f"Draft '{submission.title}' scanned: {len(saved_findings)} findings generated."
+        details=f"Draft '{submission.title}' scanned: {count_issues(saved_findings)} issues, "
+                f"{len(saved_findings) - count_issues(saved_findings)} claims passed."
     ))
     db.commit()
 
@@ -219,7 +242,9 @@ def get_manager_queue(db: Session = Depends(get_db)):
                       .order_by(Version.version_number.desc()).first())
         if not latest_ver:
             continue
-        findings = db.query(Finding).filter(Finding.version_id == latest_ver.id).all()
+        # Claims that passed are not issues, so they do not count toward risk
+        findings = [f for f in db.query(Finding).filter(Finding.version_id == latest_ver.id).all()
+                    if f.verdict != "SUPPORTED"]
 
         is_high_risk = any(f.severity == "high" or f.verdict == "UNVERIFIABLE" for f in findings)
         disputed_count = sum(1 for f in findings if f.status == "disputed")
@@ -344,7 +369,7 @@ async def resubmit_version(sub_id: int, payload: ResubmitRequest, request: Reque
     db.add(AuditLog(
         actor_role="Creator",
         action=f"Created Version {new_ver_num}",
-        details=f"Draft resubmitted with {len(saved_findings)} remaining findings."
+        details=f"Draft resubmitted with {count_issues(saved_findings)} remaining issues."
     ))
     db.commit()
 
@@ -415,12 +440,31 @@ def get_audit_logs(db: Session = Depends(get_db)):
     } for l in logs]
 
 
+def seeded_group(tag: str) -> str:
+    """Group a seeded error tag like 'banned_word:risk-free' into a comparable type."""
+    kind = tag.split(":")[0]
+    if kind in ("fact_contradiction", "policy_violation"):
+        return "contradiction"
+    return kind
+
+
+def found_group(item: dict) -> str:
+    """Group a finding into the same comparable types as the seeded errors."""
+    cat = item["category"]
+    if cat == "channel_limit":
+        return "channel_limit_exceeded"
+    if cat == "claim_verification":
+        return "unverifiable_claim" if item["verdict"] == "UNVERIFIABLE" else "contradiction"
+    return cat  # banned_word, preferred_term, missing_disclaimer
+
+
 @app.get("/api/evaluate")
 async def evaluate_test_drafts():
-    """Run all test drafts through the pipeline and return a seeded-vs-found breakdown.
+    """Run all test drafts and compare seeded errors with findings BY TYPE.
 
+    Found = seeded errors the product matched by type. Missed = seeded errors it
+    did not find. False alarms = findings with no matching seeded error.
     Results are cached for 30 minutes so visitors cannot use up the AI quota.
-    The counts are approximate: they compare totals, not individual error types.
     """
     if EVAL_CACHE["data"] is not None and time.time() - EVAL_CACHE["time"] < EVAL_CACHE_SECONDS:
         return EVAL_CACHE["data"]
@@ -431,7 +475,6 @@ async def evaluate_test_drafts():
         raise HTTPException(status_code=404, detail="Test drafts not found")
 
     async with EVAL_LOCK:
-        # Another visitor may have finished the run while we waited
         if EVAL_CACHE["data"] is not None and time.time() - EVAL_CACHE["time"] < EVAL_CACHE_SECONDS:
             return EVAL_CACHE["data"]
 
@@ -441,10 +484,15 @@ async def evaluate_test_drafts():
         results = []
         for d in drafts:
             rule_findings = check_rules(d["text"], d["channel"])
-            claim_findings = await check_claims(d["text"], d["channel"])
+            claim_findings = [f for f in await check_claims(d["text"], d["channel"])
+                              if f["verdict"] != "SUPPORTED"]
 
-            total_found = len(rule_findings) + len(claim_findings)
-            seeded_count = len(d["seeded_errors"])
+            found = Counter(found_group(f) for f in rule_findings + claim_findings)
+            seeded = Counter(seeded_group(t) for t in d["seeded_errors"])
+
+            seeded_count = sum(seeded.values())
+            matched = sum(min(seeded[k], found[k]) for k in seeded)
+            found_total = sum(found.values())
 
             results.append({
                 "id": d["id"],
@@ -452,9 +500,9 @@ async def evaluate_test_drafts():
                 "channel": d["channel"],
                 "seeded_count": seeded_count,
                 "seeded_errors": d["seeded_errors"],
-                "found_count": total_found,
-                "false_alarms": max(0, total_found - seeded_count),
-                "missed_count": max(0, seeded_count - total_found)
+                "found_count": matched,
+                "missed_count": seeded_count - matched,
+                "false_alarms": found_total - matched
             })
 
         EVAL_CACHE["data"] = results

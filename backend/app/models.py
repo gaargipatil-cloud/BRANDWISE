@@ -78,3 +78,14 @@ class AuditLog(Base):
     action = Column(String(128), nullable=False)
     details = Column(Text, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+
+class RuleClarification(Base):
+    """A drafted clearer wording for an unclear rule, waiting for the brand owner's decision."""
+    __tablename__ = "rule_clarifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rule = Column(String(255), nullable=False)
+    draft_text = Column(Text, nullable=False)
+    status = Column(String(32), nullable=False, default="draft")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

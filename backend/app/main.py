@@ -11,11 +11,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .db import engine, Base, get_db
-from .models import Submission, Version, Finding, Action, AuditLog
+from .models import Submission, Version, Finding, Action, AuditLog, RuleClarification
 from .rules import check_rules
 from .claims import extract_claims
 from .retrieval import retrieve_top_passages
-from .llm import verify_claim_with_gemini
+from .llm import verify_claim_with_gemini, suggest_clarification
 from .seed import seed_database
 
 # Initialize database schema
@@ -95,7 +95,12 @@ class DecisionRequest(BaseModel):
 class ResubmitRequest(BaseModel):
     text: str = Field(..., max_length=20000)
 
+class ClarifyRequest(BaseModel):
+    rule: str = Field(..., max_length=255)
 
+
+class ClarificationDecision(BaseModel):
+    action: str  # "approve" or "dismiss"
 # ---------- Shared helpers ----------
 async def check_claims(text: str, channel: str) -> list:
     """Find claim sentences, verify each against the brand pack, return findings.
@@ -407,24 +412,158 @@ def manager_decision(sub_id: int, payload: DecisionRequest, db: Session = Depend
     return {"status": "ok", "submission_status": sub.status}
 
 
+def rule_key(f: Finding) -> str:
+    """The name a finding is grouped under: its source rule, or its category."""
+    return f.source_name if f.source_name and f.source_name != "None" else f.category
+
+
+def collect_rule_stats(db: Session) -> dict:
+    """Count, for every rule, how often it triggered, was disputed and was overruled."""
+    findings = db.query(Finding).filter(Finding.verdict != "SUPPORTED").all()
+    rows = (db.query(Version.id, Submission.status)
+            .join(Submission, Submission.id == Version.submission_id).all())
+    version_status = {vid: st for vid, st in rows}
+
+    stats = {}
+    for f in findings:
+        key = rule_key(f)
+        s = stats.setdefault(key, {"triggered": 0, "disputed": 0, "overruled": 0,
+                                   "quote": "", "examples": []})
+        s["triggered"] += 1
+        if f.source_quote and not s["quote"]:
+            s["quote"] = f.source_quote
+        if f.status == "disputed":
+            s["disputed"] += 1
+            # Overruled = the manager approved the draft despite the creator's dispute
+            if version_status.get(f.version_id) == "approved":
+                s["overruled"] += 1
+            if len(s["examples"]) < 3:
+                s["examples"].append({
+                    "original_text": f.original_text,
+                    "reason": f.dispute_reason or "No reason given"
+                })
+    return stats
+
+
+def ambiguity_level(triggered: int, score: int) -> str:
+    """Label a rule. Rules seen fewer than twice are not judged."""
+    if triggered < 2:
+        return "Not enough data"
+    if score >= 50:
+        return "High"
+    if score >= 25:
+        return "Medium"
+    return "Low"
+
+
 @app.get("/api/health_analytics")
 def guideline_health(db: Session = Depends(get_db)):
-    """Aggregate rule disputes and identify frequently disputed policies."""
-    disputed_findings = db.query(Finding).filter(Finding.status == "disputed").all()
-    stats = defaultdict(lambda: {"count": 0, "examples": []})
+    """Rank rules by how unclear they seem.
 
-    for f in disputed_findings:
-        key = f.source_name or f.category
-        stats[key]["count"] += 1
-        if len(stats[key]["examples"]) < 3:
-            stats[key]["examples"].append({
-                "original_text": f.original_text,
-                "reason": f.dispute_reason or "No dispute reason provided"
-            })
+    Ambiguity score = 70% dispute rate + 30% overrule rate, as a percentage.
+    Dispute rate = disputed findings / times the rule triggered.
+    Overrule rate = disputes where the manager approved anyway / disputed findings.
+    """
+    stats = collect_rule_stats(db)
 
-    output = [{"rule": k, "dispute_count": v["count"], "examples": v["examples"]} for k, v in stats.items()]
-    output.sort(key=lambda x: x["dispute_count"], reverse=True)
+    # Latest drafted wording per rule (rows are read oldest first, so later ones win)
+    clar = {c.rule: c for c in db.query(RuleClarification).order_by(RuleClarification.id).all()}
+
+    output = []
+    for key, s in stats.items():
+        dispute_rate = s["disputed"] / s["triggered"]
+        overrule_rate = (s["overruled"] / s["disputed"]) if s["disputed"] else 0
+        score = round(100 * (0.7 * dispute_rate + 0.3 * overrule_rate))
+        c = clar.get(key)
+        output.append({
+            "rule": key,
+            "triggered": s["triggered"],
+            "disputed": s["disputed"],
+            "overruled": s["overruled"],
+            "score": score,
+            "level": ambiguity_level(s["triggered"], score),
+            "rule_text": s["quote"],
+            "examples": s["examples"],
+            "clarification": ({"id": c.id, "draft_text": c.draft_text, "status": c.status}
+                              if c else None)
+        })
+
+    output.sort(key=lambda x: (x["score"], x["triggered"]), reverse=True)
     return output
+
+
+@app.post("/api/health_analytics/clarify")
+async def draft_clarification(payload: ClarifyRequest, request: Request, db: Session = Depends(get_db)):
+    """Draft clearer wording for an unclear rule. A person must approve it."""
+    enforce_rate_limits(get_client_ip(request))
+
+    stats = collect_rule_stats(db)
+    s = stats.get(payload.rule)
+    if not s:
+        raise HTTPException(status_code=404, detail="Rule not found.")
+
+    text = await suggest_clarification(payload.rule, s["quote"], s["examples"])
+    if not text:
+        raise HTTPException(status_code=503,
+                            detail="Could not draft wording right now. Please try again in a minute.")
+
+    c = RuleClarification(rule=payload.rule, draft_text=text, status="draft")
+    db.add(c)
+    db.add(AuditLog(actor_role="System", action="Drafted clearer wording",
+                    details=f"Draft wording proposed for '{payload.rule}'. Awaiting a person's decision."))
+    db.commit()
+    db.refresh(c)
+    return {"id": c.id, "draft_text": c.draft_text, "status": c.status}
+
+
+@app.post("/api/health_analytics/clarification/{clar_id}/decision")
+def decide_clarification(clar_id: int, payload: ClarificationDecision, db: Session = Depends(get_db)):
+    """Record the brand owner's decision on drafted wording."""
+    if payload.action not in ("approve", "dismiss"):
+        raise HTTPException(status_code=400, detail="Action must be approve or dismiss.")
+
+    c = db.get(RuleClarification, clar_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Draft wording not found.")
+
+    c.status = "approved" if payload.action == "approve" else "dismissed"
+    db.add(AuditLog(actor_role="Manager", action=f"Wording {c.status}",
+                    details=f"Clearer wording for '{c.rule}' was {c.status}."))
+    db.commit()
+    return {"status": "ok", "new_status": c.status}
+
+
+@app.post("/api/demo/disputes")
+def load_demo_disputes(db: Session = Depends(get_db)):
+    """Add clearly labelled sample disputes so the insights page can be demonstrated."""
+    if db.query(Finding).filter(Finding.status == "disputed").first():
+        return {"status": "skipped", "detail": "Disputes already exist."}
+
+    added = 0
+    approve_versions = set()
+    for f in db.query(Finding).filter(Finding.status == "open").all():
+        key = rule_key(f)
+        if key.startswith("claims_policy.md - Section 2"):
+            f.status = "disputed"
+            f.dispute_reason = "Sample: this wording is about savings, not investment returns."
+            added += 1
+        elif f.category == "preferred_term":
+            f.status = "disputed"
+            f.dispute_reason = "Sample: 'cheap' is used on purpose in a student campaign."
+            approve_versions.add(f.version_id)
+            added += 1
+
+    for vid in approve_versions:
+        ver = db.get(Version, vid)
+        sub = db.get(Submission, ver.submission_id)
+        sub.status = "approved"
+        db.add(Action(version_id=vid, actor_role="Manager", action_type="approve",
+                      comment="Sample: approved despite the preferred-term finding."))
+
+    db.add(AuditLog(actor_role="Demo", action="Loaded demo scenario",
+                    details=f"{added} sample disputes added. Sample data for demonstration only."))
+    db.commit()
+    return {"status": "ok", "disputes_added": added}
 
 
 @app.get("/api/audit_logs")

@@ -154,3 +154,51 @@ async def verify_claim_with_gemini(claim: str, retrieved_passages: list) -> dict
             claim,
             f"Automated check unavailable ({type(exc).__name__})."
         )
+    
+
+async def suggest_clarification(rule_name: str, rule_text: str, examples: list):
+    """Ask Gemini for a clearer wording of an often-disputed rule. Returns None on failure."""
+    if not GEMINI_API_KEY:
+        return None
+
+    example_lines = "\n".join(
+        f'- Draft text: "{e["original_text"]}" | Creator objection: {e["reason"]}' for e in examples
+    ) or "- (no examples yet)"
+
+    prompt = (
+        "You are helping a brand owner improve an unclear guideline.\n"
+        f"Rule name: {rule_name}\n"
+        f"Current rule text: {rule_text or 'not available'}\n"
+        f"Cases where creators disputed it:\n{example_lines}\n\n"
+        "Write a clearer version of this rule in at most three plain-English sentences. "
+        "Keep its original intent, say exactly what is and is not allowed, and do not invent "
+        "facts, numbers or new rules. Return only the rewritten rule text."
+    )
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    headers = {"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2}
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=15.0)) as client:
+            resp = None
+            for attempt in range(2):
+                try:
+                    resp = await client.post(url, json=payload, headers=headers)
+                except httpx.TimeoutException:
+                    resp = None
+                    continue
+                if resp.status_code not in RETRY_CODES:
+                    break
+                await asyncio.sleep(2 * (attempt + 1))
+
+            if resp is None or resp.status_code != 200:
+                return None
+            data = resp.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            return text or None
+    except Exception:
+        return None

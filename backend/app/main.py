@@ -421,7 +421,8 @@ def collect_rule_stats(db: Session) -> dict:
     """Count, for every rule, how often it triggered, was disputed and was overruled."""
     findings = db.query(Finding).filter(Finding.verdict != "SUPPORTED").all()
     rows = (db.query(Version.id, Submission.status)
-            .join(Submission, Submission.id == Version.submission_id).all())
+            .filter(Version.submission_id == Submission.id).all())
+    
     version_status = {vid: st for vid, st in rows}
 
     stats = {}

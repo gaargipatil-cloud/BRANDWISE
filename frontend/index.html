@@ -469,6 +469,7 @@
 
   <nav>
     <button id="tabBtnCreator" class="active" onclick="switchTab('creator')">Draft Workspace</button>
+    <button id="tabBtnImage" onclick="switchTab('image')">Image Review</button>
     <button id="tabBtnManager" onclick="switchTab('manager')">Review Queue</button>
     <button id="tabBtnHealth" onclick="switchTab('health')">Guideline Health</button>
     <button id="tabBtnEval" onclick="switchTab('eval')">Evaluation</button>
@@ -528,6 +529,38 @@
           <div id="findingsCardList"></div>
         </div>
       </div>
+    </section>
+        <!-- TAB: IMAGE REVIEW -->
+    <section id="tabImage" class="tab-content">
+      <div class="example-bar">
+        <span>Try an example image:</span>
+        <button class="btn btn-secondary" onclick="loadExampleImage(1)">Poster with problems</button>
+        <button class="btn btn-secondary" onclick="loadExampleImage(2)">Clean banner</button>
+      </div>
+
+      <div class="editor-section">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="imgTitle">Title</label>
+            <input type="text" id="imgTitle" value="Launch banner" />
+          </div>
+          <div class="form-group">
+            <label for="imgFile">Image (PNG, JPEG or WEBP, up to 2 MB)</label>
+            <input type="file" id="imgFile" accept="image/png,image/jpeg,image/webp" onchange="handleImageFile(this)" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="imgAlt">Alt text (what a screen reader will say)</label>
+          <textarea id="imgAlt" style="height:70px;"></textarea>
+        </div>
+        <div id="imgPreviewBox" style="margin:1rem 0;"></div>
+        <button class="btn btn-primary" id="btnImageReview" onclick="submitImageReview()">Review image</button>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.75rem;">
+          Colour contrast is an estimate from the image's two main colours. The text inside the image is read by Gemini and checked against the brand sources.
+        </p>
+      </div>
+
+      <div id="imageResults"></div>
     </section>
 
     <!-- TAB 2: MANAGER QUEUE -->
@@ -696,7 +729,7 @@
     }
 
     function switchTab(tabName) {
-      const tabs = ["creator", "manager", "health", "eval", "audit", "about"];
+      const tabs = ["creator", "image", "manager", "health", "eval", "audit", "about"];
       tabs.forEach(t => {
         const el = document.getElementById("tab" + t.charAt(0).toUpperCase() + t.slice(1));
         const btn = document.getElementById("tabBtn" + t.charAt(0).toUpperCase() + t.slice(1));
@@ -1040,6 +1073,7 @@
       document.getElementById("managerDraftTitle").innerText = `${data.title} (v${data.version_number})`;
       document.getElementById("managerDraftStatus").innerText = STATUS_LABELS[data.status] || data.status;
       document.getElementById("managerDraftText").innerText = data.text;
+      showManagerImage(data);
       document.getElementById("managerComment").value = "";
 
       let html = "";
@@ -1363,7 +1397,187 @@
         tbody.appendChild(tr);
       });
     }
+    /* Image Review */
+    let imageData = "";
 
+    const CATEGORY_LABELS = {
+      alt_text: "Alt text",
+      image_contrast: "Colour contrast",
+      image_palette: "Brand colours",
+      image_size: "Image size",
+      image_text: "Text in image",
+      banned_word: "Banned word",
+      preferred_term: "Preferred term",
+      missing_disclaimer: "Missing disclaimer",
+      claim_verification: "Claim check"
+    };
+
+    function showImagePreview() {
+      const box = document.getElementById("imgPreviewBox");
+      box.innerHTML = imageData
+        ? `<img src="${imageData}" alt="Preview of the image to review" style="max-width:100%; max-height:260px; border:1px solid var(--border-color); border-radius:4px;">`
+        : "";
+    }
+
+    function handleImageFile(input) {
+      const file = input.files[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) {
+        alert("This image is larger than 2 MB. Please choose a smaller one.");
+        input.value = "";
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => { imageData = reader.result; showImagePreview(); };
+      reader.onerror = () => alert("Could not read that file.");
+      reader.readAsDataURL(file);
+    }
+
+    function loadExampleImage(n) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 800;
+      canvas.height = 400;
+      const g = canvas.getContext("2d");
+
+      if (n === 1) {
+        // Low contrast, off-brand colours, risky wording, and no alt text
+        g.fillStyle = "#8FA3BF"; g.fillRect(0, 0, 800, 400);
+        g.fillStyle = "#A9BAD1"; g.font = "bold 40px Arial"; g.fillText("Finwise: risk-free investing", 40, 170);
+        g.font = "28px Arial"; g.fillText("with guaranteed returns", 40, 225);
+        g.fillStyle = "#E4572E"; g.fillRect(40, 290, 220, 50);
+        g.fillStyle = "#FFFFFF"; g.font = "bold 24px Arial"; g.fillText("Join now", 85, 324);
+        document.getElementById("imgTitle").value = "Poster with problems";
+        document.getElementById("imgAlt").value = "";
+      } else {
+        // Approved colours, good contrast, a supported fact, and proper alt text
+        g.fillStyle = "#14213D"; g.fillRect(0, 0, 800, 400);
+        g.fillStyle = "#D4AF37"; g.font = "bold 40px Arial"; g.fillText("Managing money should feel calm.", 40, 180);
+        g.fillStyle = "#FFFFFF"; g.font = "28px Arial"; g.fillText("Finwise launched in 2023.", 40, 235);
+        document.getElementById("imgTitle").value = "Clean banner";
+        document.getElementById("imgAlt").value = "Finwise banner reading: managing money should feel calm.";
+      }
+      imageData = canvas.toDataURL("image/png");
+      document.getElementById("imgFile").value = "";
+      showImagePreview();
+    }
+
+    async function submitImageReview() {
+      if (!imageData) {
+        alert("Please choose an image or try an example first.");
+        return;
+      }
+      const btn = document.getElementById("btnImageReview");
+      const out = document.getElementById("imageResults");
+      btn.disabled = true;
+      btn.innerText = "Reviewing...";
+      out.innerHTML = `<p style="color:var(--text-muted);">Reviewing the image. This can take up to a minute...</p>`;
+
+      try {
+        const resp = await fetch("/api/image-review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: document.getElementById("imgTitle").value.trim(),
+            alt_text: document.getElementById("imgAlt").value,
+            image_data: imageData
+          })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          const msg = typeof data.detail === "string" ? data.detail
+            : "The request was not accepted. Check the image size and try again.";
+          out.innerHTML = `<p style="color:var(--red-contradicted);">${escapeHtml(msg)}</p>`;
+          return;
+        }
+        renderImageResult(data);
+      } catch (e) {
+        out.innerHTML = `<p style="color:var(--red-contradicted);">Could not reach the server. Please try again.</p>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "Review image";
+      }
+    }
+
+    function renderImageResult(data) {
+      const out = document.getElementById("imageResults");
+      const issues = data.findings.filter(f => f.verdict !== "SUPPORTED");
+      const passed = data.findings.filter(f => f.verdict === "SUPPORTED");
+
+      const swatches = data.colours.map(c =>
+        `<span style="display:inline-flex; align-items:center; gap:0.3rem; margin-right:0.75rem; font-size:0.8rem;">
+           <span style="width:16px; height:16px; background:${escapeHtml(c.hex)}; border:1px solid var(--border-color); display:inline-block;"></span>
+           ${escapeHtml(c.hex)} ${Math.round(c.share * 100)}%
+         </span>`).join("");
+
+      let textInfo = "";
+      if (data.text_status === "ok") {
+        textInfo = `<p style="font-size:0.85rem; margin-top:0.5rem;"><strong>Text read from the image:</strong></p>
+                    <div class="source-quote-box" style="white-space:pre-wrap;">${escapeHtml(data.extracted_text)}</div>`;
+      } else if (data.text_status === "none") {
+        textInfo = `<p style="font-size:0.85rem; margin-top:0.5rem;">No readable text was found in the image.</p>`;
+      } else {
+        textInfo = `<p style="font-size:0.85rem; margin-top:0.5rem; color:var(--amber-unverifiable);">The text in the image could not be read automatically. Please read it yourself.</p>`;
+      }
+
+      const cards = issues.map(f => {
+        let badge = "verdict-contradicted", label = "ISSUE";
+        if (f.verdict === "UNVERIFIABLE") { badge = "verdict-unverifiable"; label = "UNVERIFIABLE"; }
+        const quote = f.source_quote
+          ? `<div class="source-quote-box">"${escapeHtml(f.source_quote)}" &mdash; <small>${escapeHtml(f.source_name || "")}</small></div>` : "";
+        const fix = f.suggestion
+          ? `<div class="diff-box"><strong>Suggestion:</strong> ${escapeHtml(f.suggestion)}</div>` : "";
+        return `
+          <div class="finding-card">
+            <div class="card-top">
+              <span class="verdict-badge ${badge}">${label} &middot; ${escapeHtml(CATEGORY_LABELS[f.category] || f.category)}</span>
+              <span style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">${escapeHtml(f.severity)} severity</span>
+            </div>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin:0.2rem 0;">${escapeHtml(f.original_text)}</p>
+            <p style="font-size:0.88rem; margin:0.3rem 0;"><strong>Issue:</strong> ${escapeHtml(f.reason)}</p>
+            ${quote}${fix}
+            <div class="card-actions"><button class="btn btn-dispute" onclick="openDisputeModal(${f.id})">Dispute</button></div>
+          </div>`;
+      }).join("");
+
+      const passedHtml = passed.length
+        ? `<p style="font-size:0.85rem; color:var(--green-supported); margin-top:0.75rem;">Claims in the image that matched an approved source: ${passed.map(p => escapeHtml(p.original_text)).join(" | ")}</p>` : "";
+
+      out.innerHTML = `
+        <div class="panel">
+          <div class="panel-header"><span>Image review</span>
+            <span style="font-size:0.85rem; color:var(--text-muted); font-family:var(--font-sans);">${issues.length} issue${issues.length === 1 ? "" : "s"} &middot; ${data.width} x ${data.height}px</span>
+          </div>
+          <p style="font-size:0.85rem; margin-bottom:0.4rem;"><strong>Main colours:</strong></p>
+          <div>${swatches}</div>
+          ${textInfo}
+          <div style="margin-top:1rem;">
+            ${issues.length ? cards : `<p style="color:var(--green-supported); font-weight:600; padding:1rem; background:var(--green-bg); border-radius:4px;">No image problems found.</p>`}
+          </div>
+          ${passedHtml}
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:1rem;">This image is now in the Review Queue.</p>
+        </div>`;
+    }
+
+    async function showManagerImage(data) {
+      let box = document.getElementById("managerImageBox");
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "managerImageBox";
+        const textEl = document.getElementById("managerDraftText");
+        textEl.parentNode.insertBefore(box, textEl);
+      }
+      box.innerHTML = "";
+      if (data.channel !== "image") return;
+      try {
+        const resp = await fetch(`/api/submission/${data.id}/image`);
+        if (!resp.ok) return;
+        const img = await resp.json();
+        box.innerHTML = `
+          <img src="${img.data_url}" alt="${escapeHtml(img.alt_text || "")}" style="max-width:100%; max-height:240px; border:1px solid var(--border-color); border-radius:4px; margin-bottom:0.5rem;">
+          <p style="font-size:0.82rem; margin-bottom:0.5rem;"><strong>Alt text:</strong> ${img.alt_text ? escapeHtml(img.alt_text) : "(none)"}</p>
+          <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:0.5rem;">Text read from the image:</p>`;
+      } catch (e) { /* the preview is optional */ }
+    }
     // Initialize character counter on page load
     updateCharCount();
   </script>

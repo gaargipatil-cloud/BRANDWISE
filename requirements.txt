@@ -5,3 +5,4 @@ scikit-learn
 httpx
 python-dotenv
 pydantic
+Pillow

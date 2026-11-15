@@ -3,6 +3,7 @@ import os
 import json
 import re
 import asyncio
+import base64
 import httpx
 from dotenv import load_dotenv
 
@@ -202,3 +203,54 @@ async def suggest_clarification(rule_name: str, rule_text: str, examples: list):
             return text or None
     except Exception:
         return None
+    
+
+async def read_image_text(image_bytes: bytes, mime: str):
+    """Ask Gemini to read the text inside an image.
+
+    Returns (text, status). Status is "ok" (text found), "none" (no text)
+    or "failed" (the service could not be used).
+    """
+    if not GEMINI_API_KEY:
+        return "", "failed"
+
+    prompt = (
+        "Transcribe every piece of readable text in this image exactly as written, "
+        "in reading order, one line per text block. Do not describe the image and do not "
+        "add anything. If the image contains no readable text, reply with the single word NONE."
+    )
+    payload = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"inline_data": {"mime_type": mime, "data": base64.b64encode(image_bytes).decode("ascii")}},
+                {"text": prompt}
+            ]
+        }],
+        "generationConfig": {"temperature": 0.0}
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    headers = {"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+            resp = None
+            for attempt in range(2):
+                try:
+                    resp = await client.post(url, json=payload, headers=headers)
+                except httpx.TimeoutException:
+                    resp = None
+                    continue
+                if resp.status_code not in RETRY_CODES:
+                    break
+                await asyncio.sleep(2 * (attempt + 1))
+
+            if resp is None or resp.status_code != 200:
+                return "", "failed"
+            data = resp.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if not text or text.upper().startswith("NONE"):
+                return "", "none"
+            return text, "ok"
+    except Exception:
+        return "", "failed"

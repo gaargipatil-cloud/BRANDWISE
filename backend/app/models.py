@@ -99,4 +99,16 @@ class FindingComment(Base):
     finding_id = Column(Integer, ForeignKey("findings.id"), nullable=False)
     actor_role = Column(String(64), nullable=False)
     text = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False) 
+    
+
+class ImageAsset(Base):
+    """A small copy of an uploaded image plus its alt text, so reviewers can see it."""
+    __tablename__ = "image_assets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    submission_id = Column(Integer, ForeignKey("submissions.id"), nullable=False)
+    data_url = Column(Text, nullable=False)
+    alt_text = Column(String(500), nullable=True)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True) 

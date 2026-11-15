@@ -1,0 +1,16 @@
+{
+  "palette": [
+    {"name": "Navy", "hex": "#14213D"},
+    {"name": "Gold", "hex": "#D4AF37"},
+    {"name": "Paper", "hex": "#FAF8F5"},
+    {"name": "Slate", "hex": "#5A6578"},
+    {"name": "Green", "hex": "#15803D"}
+  ],
+  "allow_neutrals": true,
+  "tolerance": 70,
+  "min_share": 0.08,
+  "min_width": 600,
+  "min_height": 315,
+  "alt_min_length": 10,
+  "alt_max_length": 125
+}

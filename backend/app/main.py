@@ -19,11 +19,13 @@ from .claims import extract_claims
 from .retrieval import retrieve_top_passages
 from .llm import verify_claim_with_gemini, suggest_clarification
 from .seed import seed_database
+from .image_routes import router as image_router
 
 # Initialize database schema
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Brandwise API", version="1.1.0")
+app.include_router(image_router)
 
 MAX_TEXT_CHARS = 3000      # drafts are cut to this length
 MAX_CLAIMS = 5             # at most this many claims per draft go to the AI
@@ -257,6 +259,10 @@ def route_reasons(findings) -> list:
     disputed = [f for f in findings if f.status == "disputed"]
     if disputed:
         reasons.append(f"{len(disputed)} finding(s) disputed by the creator")
+    a11y = [f for f in findings
+            if f.category in ("image_contrast", "alt_text") and f.severity == "high"]
+    if a11y:
+        reasons.append(f"{len(a11y)} serious accessibility problem(s) in the image")
     return reasons
 
 

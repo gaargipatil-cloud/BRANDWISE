@@ -461,6 +461,7 @@
         <select id="roleSelect" onchange="handleRoleChange(this.value)">
           <option value="creator">Creator</option>
           <option value="manager">Manager</option>
+          <option value="reviewer">Reviewer</option>
         </select>
       </div>
     </div>
@@ -468,7 +469,7 @@
 
   <nav>
     <button id="tabBtnCreator" class="active" onclick="switchTab('creator')">Draft Workspace</button>
-    <button id="tabBtnManager" onclick="switchTab('manager')">Manager Queue</button>
+    <button id="tabBtnManager" onclick="switchTab('manager')">Review Queue</button>
     <button id="tabBtnHealth" onclick="switchTab('health')">Guideline Health</button>
     <button id="tabBtnEval" onclick="switchTab('eval')">Evaluation</button>
     <button id="tabBtnAudit" onclick="switchTab('audit')">Activity Log</button>
@@ -568,10 +569,8 @@
             <div style="margin-top:1.5rem; border-top:1px solid var(--border-color); padding-top:1rem;">
               <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:0.3rem;">Manager Decision Comment</label>
               <textarea id="managerComment" style="width:100%; height:70px; padding:0.5rem; border:1px solid var(--border-color); border-radius:4px; margin-bottom:0.75rem;" placeholder="Add specific guidance or approval feedback..."></textarea>
-              <div style="display:flex; gap:0.75rem;">
-                <button class="btn btn-primary" onclick="makeManagerDecision('approve')">Approve Content</button>
-                <button class="btn btn-dispute" onclick="makeManagerDecision('send_back')">Send Back for Revision</button>
-              </div>
+                            <div id="decisionArea" style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;"></div>
+ 
             </div>
           </div>
         </div>
@@ -715,13 +714,19 @@
       if (tabName === "audit") loadAuditLogs();
     }
 
+    let currentRole = "creator";
+
     function handleRoleChange(role) {
-      if (role === "manager") {
+      currentRole = role;
+      const pane = document.getElementById("managerReviewPane");
+      if (pane) pane.style.display = "none";
+      if (role === "manager" || role === "reviewer") {
         switchTab("manager");
       } else {
         switchTab("creator");
       }
-    }
+    }    
+    
 
     function updateCharCount() {
       const text = document.getElementById("draftBody").value;
@@ -962,31 +967,57 @@
       alert("Finding marked as disputed. Sent to Manager queue.");
     }
 
-    /* Manager Queue */
-    async function loadManagerQueue() {
-      const resp = await fetch("/api/queue");
-      const queue = await resp.json();
-      const tbody = document.getElementById("queueTableBody");
-      tbody.innerHTML = "";
+        /* Review Queue (Manager and Reviewer) */
+    const STATUS_LABELS = {
+      pending_review: "Waiting for Manager",
+      awaiting_reviewer: "Waiting for Reviewer",
+      approved: "Approved",
+      sent_back: "Sent back to creator"
+    };
+    const ACTION_LABELS = {
+      approve: "Approved",
+      send_back: "Sent back",
+      escalate: "Approved and sent to Reviewer"
+    };
+    let activeDetail = null;
 
-      if (queue.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Queue is empty.</td></tr>`;
+    async function loadManagerQueue() {
+      const tbody = document.getElementById("queueTableBody");
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>`;
+
+      let queue = [];
+      try {
+        const resp = await fetch("/api/queue");
+        queue = await resp.json();
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--red-contradicted);">Could not load the queue. Please refresh.</td></tr>`;
         return;
       }
 
+      if (currentRole === "reviewer") queue = queue.filter(q => q.status === "awaiting_reviewer");
+
+      if (!queue.length) {
+        const msg = currentRole === "reviewer"
+          ? "Nothing is waiting for a Reviewer. Drafts with risky claims appear here after a Manager approves them."
+          : "The queue is empty.";
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">${msg}</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = "";
       queue.forEach(item => {
         const tr = document.createElement("tr");
         const riskBadge = item.risk_level === "High Risk" ? "badge-risk-high" : "badge-risk-low";
+        const needs = (item.needs_reviewer && item.status === "pending_review")
+          ? `<br><small style="color:var(--amber-unverifiable);">Reviewer sign-off needed</small>` : "";
         tr.innerHTML = `
           <td><strong>${escapeHtml(item.title)}</strong></td>
           <td>${escapeHtml(item.channel)}</td>
           <td><span class="${riskBadge}">${escapeHtml(item.risk_level)}</span></td>
           <td>${item.findings_count}</td>
-          <td>${item.disputed_count > 0 ? `<strong style="color:var(--amber-unverifiable);">${item.disputed_count}</strong>` : '0'}</td>
-          <td>${escapeHtml(item.status)}</td>
-          <td>
-            <button class="btn btn-secondary" onclick="loadSubmissionForManager(${item.id})">Review</button>
-          </td>
+          <td>${item.disputed_count > 0 ? `<strong style="color:var(--amber-unverifiable);">${item.disputed_count}</strong>` : "0"}</td>
+          <td>${escapeHtml(STATUS_LABELS[item.status] || item.status)}${needs}</td>
+          <td><button class="btn btn-secondary" onclick="loadSubmissionForManager(${item.id})">Open</button></td>
         `;
         tbody.appendChild(tr);
       });
@@ -994,59 +1025,192 @@
 
     async function loadSubmissionForManager(subId) {
       activeSubmissionId = subId;
-      const resp = await fetch(`/api/submission/${subId}`);
-      const data = await resp.json();
+      let data;
+      try {
+        const resp = await fetch(`/api/submission/${subId}`);
+        if (!resp.ok) { alert("Could not open this draft."); return; }
+        data = await resp.json();
+      } catch (e) {
+        alert("Could not reach the server.");
+        return;
+      }
+      activeDetail = data;
 
       document.getElementById("managerReviewPane").style.display = "block";
       document.getElementById("managerDraftTitle").innerText = `${data.title} (v${data.version_number})`;
-      document.getElementById("managerDraftStatus").innerText = data.status;
+      document.getElementById("managerDraftStatus").innerText = STATUS_LABELS[data.status] || data.status;
       document.getElementById("managerDraftText").innerText = data.text;
+      document.getElementById("managerComment").value = "";
 
-      const findingsContainer = document.getElementById("managerFindingsList");
-      findingsContainer.innerHTML = "";
-
-      if (data.findings.length === 0) {
-        findingsContainer.innerHTML = `<p style="color:var(--green-supported); padding:0.5rem 0;">No active issues on this version.</p>`;
+      let html = "";
+      if (data.route_reasons.length) {
+        html += `<div style="padding:0.6rem; background:var(--amber-bg); border:1px solid #FCD34D; border-radius:4px; margin-bottom:0.75rem; font-size:0.85rem;"><strong>Needs Reviewer sign-off:</strong> ${data.route_reasons.map(escapeHtml).join("; ")}.</div>`;
       } else {
-        data.findings.forEach(f => {
-          const item = document.createElement("div");
-          item.style = "padding:0.75rem; border:1px solid var(--border-color); border-radius:4px; margin-bottom:0.5rem; background:var(--bg-paper);";
-          item.innerHTML = `
+        html += `<div style="padding:0.6rem; background:var(--green-bg); border:1px solid #86EFAC; border-radius:4px; margin-bottom:0.75rem; font-size:0.85rem;">No claim, disclaimer or dispute risk found. The Manager's approval is final.</div>`;
+      }
+
+      const issues = data.findings.filter(f => f.verdict !== "SUPPORTED");
+      if (!issues.length) {
+        html += `<p style="color:var(--green-supported); padding:0.5rem 0;">No active issues on this version.</p>`;
+      }
+      issues.forEach(f => {
+        html += `
+          <div style="padding:0.75rem; border:1px solid var(--border-color); border-radius:4px; margin-bottom:0.5rem; background:var(--bg-paper);">
             <div style="display:flex; justify-content:space-between; margin-bottom:0.25rem;">
               <strong style="font-size:0.85rem;">${escapeHtml(f.verdict)} - ${escapeHtml(f.category)}</strong>
               <span style="font-size:0.75rem; font-weight:600;">Status: ${escapeHtml(f.status)}</span>
             </div>
             <p style="font-size:0.85rem;">${escapeHtml(f.reason)}</p>
-            ${f.dispute_reason ? `<div style="margin-top:0.3rem; padding:0.4rem; background:#FEF3C7; font-size:0.8rem; border-radius:3px;"><strong>Creator Dispute:</strong> ${escapeHtml(f.dispute_reason)}</div>` : ''}
-          `;
-          findingsContainer.appendChild(item);
-        });
+            ${f.dispute_reason ? `<div style="margin-top:0.3rem; padding:0.4rem; background:#FEF3C7; font-size:0.8rem; border-radius:3px;"><strong>Creator dispute:</strong> ${escapeHtml(f.dispute_reason)}</div>` : ""}
+            <div id="comments-${f.id}" style="margin-top:0.4rem; font-size:0.82rem;"></div>
+            <div style="display:flex; gap:0.4rem; margin-top:0.4rem;">
+              <input id="cin-${f.id}" maxlength="500" placeholder="Add a comment" style="flex:1; padding:0.35rem; border:1px solid var(--border-color); border-radius:4px;">
+              <button class="btn btn-secondary" onclick="addComment(${f.id})">Comment</button>
+            </div>
+          </div>`;
+      });
+
+      if (data.versions.length > 1) {
+        const opts = data.versions.slice(0, -1)
+          .map(v => `<option value="${v.version_number}">Version ${v.version_number}</option>`).join("");
+        html += `
+          <div style="margin-top:1rem;">
+            <strong style="font-size:0.9rem;">Compare versions</strong>
+            <div style="display:flex; gap:0.5rem; align-items:center; margin:0.4rem 0; flex-wrap:wrap;">
+              <select id="diffFrom" style="padding:0.3rem;">${opts}</select>
+              <span style="font-size:0.85rem;">with version ${data.version_number}</span>
+              <button class="btn btn-secondary" onclick="showDiff()">Show changes</button>
+            </div>
+            <div id="diffOutput"></div>
+          </div>`;
       }
 
+      if (data.history.length) {
+        html += `<div style="margin-top:1rem;"><strong style="font-size:0.9rem;">Decision history</strong><ul style="font-size:0.82rem; margin:0.3rem 0 0 1.2rem;">` +
+          data.history.map(h => `<li>${escapeHtml(h.created_at)} &middot; v${h.version_number} &middot; <strong>${escapeHtml(h.actor_role)}</strong>: ${escapeHtml(ACTION_LABELS[h.action_type] || h.action_type)}${h.comment ? ` &mdash; ${escapeHtml(h.comment)}` : ""}</li>`).join("") +
+          `</ul></div>`;
+      }
+
+      document.getElementById("managerFindingsList").innerHTML = html;
+      issues.forEach(f => loadComments(f.id));
+      renderDecisionArea(data);
       document.getElementById("managerReviewPane").scrollIntoView({ behavior: "smooth" });
+    }
+
+    function renderDecisionArea(data) {
+      const area = document.getElementById("decisionArea");
+      const status = data.status;
+      let html = "";
+      const note = (t) => `<span style="font-size:0.85rem; color:var(--text-muted);">${t}</span>`;
+
+      if (currentRole === "manager" && status === "pending_review") {
+        const label = data.route_reasons.length ? "Approve and send to Reviewer" : "Approve content";
+        html = `<button class="btn btn-primary" onclick="makeManagerDecision('approve')">${label}</button>
+                <button class="btn btn-dispute" onclick="makeManagerDecision('send_back')">Send back for revision</button>`;
+      } else if (currentRole === "reviewer" && status === "awaiting_reviewer") {
+        html = `<button class="btn btn-primary" onclick="makeManagerDecision('approve')">Approve as Reviewer</button>
+                <button class="btn btn-dispute" onclick="makeManagerDecision('send_back')">Send back for revision</button>`;
+      } else if (currentRole === "creator") {
+        html = note('Switch "Viewing as" to Manager or Reviewer to decide.');
+      } else if (status === "approved") {
+        html = note("This draft has been approved.");
+      } else if (status === "sent_back") {
+        html = note("Sent back. Waiting for the creator to resubmit.");
+      } else if (status === "awaiting_reviewer") {
+        html = note("Waiting for a Reviewer to sign off.");
+      } else {
+        html = note("This draft is still with the Manager.");
+      }
+      area.innerHTML = html;
     }
 
     async function makeManagerDecision(decisionType) {
       if (!activeSubmissionId) return;
       const comment = document.getElementById("managerComment").value.trim();
+      if (decisionType === "send_back" && comment.length < 3) {
+        alert("Please add a comment explaining what should change.");
+        return;
+      }
+      const role = currentRole === "reviewer" ? "Reviewer" : "Manager";
+      document.querySelectorAll("#decisionArea button").forEach(b => b.disabled = true);
 
-      const resp = await fetch(`/api/submission/${activeSubmissionId}/decision`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          actor_role: "Manager",
-          action_type: decisionType,
-          comment: comment
-        })
-      });
-
-      if (resp.ok) {
-        alert(`Draft has been ${decisionType === 'approve' ? 'approved' : 'sent back for revision'}.`);
+      try {
+        const resp = await fetch(`/api/submission/${activeSubmissionId}/decision`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ actor_role: role, action_type: decisionType, comment })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          alert(data.detail || "Could not record the decision.");
+          loadSubmissionForManager(activeSubmissionId);
+          return;
+        }
+        const msg = { approved: "Draft approved.", sent_back: "Draft sent back for revision.",
+                      awaiting_reviewer: "Approved by the Manager and sent to a Reviewer for sign-off." };
+        alert(msg[data.submission_status] || "Decision recorded.");
         document.getElementById("managerReviewPane").style.display = "none";
         loadManagerQueue();
+      } catch (e) {
+        alert("Could not reach the server.");
+        loadSubmissionForManager(activeSubmissionId);
       }
     }
 
+    async function loadComments(findingId) {
+      const box = document.getElementById("comments-" + findingId);
+      if (!box) return;
+      try {
+        const resp = await fetch(`/api/findings/${findingId}/comments`);
+        const list = await resp.json();
+        box.innerHTML = list.map(c =>
+          `<div style="margin-bottom:0.25rem;"><strong>${escapeHtml(c.role)}</strong> <span style="color:var(--text-muted);">${escapeHtml(c.created_at)}</span>: ${escapeHtml(c.text)}</div>`
+        ).join("");
+      } catch (e) {
+        box.innerText = "";
+      }
+    }
+
+    async function addComment(findingId) {
+      const input = document.getElementById("cin-" + findingId);
+      const text = input.value.trim();
+      if (!text) return;
+      const role = currentRole === "reviewer" ? "Reviewer" : (currentRole === "manager" ? "Manager" : "Creator");
+      const resp = await fetch(`/api/findings/${findingId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, text })
+      });
+      if (resp.ok) {
+        input.value = "";
+        loadComments(findingId);
+      } else {
+        const err = await resp.json();
+        alert(err.detail || "Could not add the comment.");
+      }
+    }
+
+    async function showDiff() {
+      const from = document.getElementById("diffFrom").value;
+      const to = activeDetail.version_number;
+      const out = document.getElementById("diffOutput");
+      out.innerText = "Loading...";
+      try {
+        const resp = await fetch(`/api/submission/${activeSubmissionId}/diff?a=${from}&b=${to}`);
+        const d = await resp.json();
+        const render = (skip) => d.segments.filter(s => s.type !== skip).map(s =>
+          s.type === "delete" ? `<del style="background:#FECACA; color:var(--red-contradicted);">${escapeHtml(s.text)}</del>`
+          : s.type === "insert" ? `<ins style="background:#BBF7D0; color:var(--green-supported); text-decoration:none;">${escapeHtml(s.text)}</ins>`
+          : escapeHtml(s.text)).join("");
+        out.innerHTML = `
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; font-size:0.85rem; white-space:pre-wrap;">
+            <div style="padding:0.5rem; border:1px solid var(--border-color); border-radius:4px; background:var(--bg-paper);"><strong>Version ${from}</strong><br>${render("insert")}</div>
+            <div style="padding:0.5rem; border:1px solid var(--border-color); border-radius:4px; background:var(--bg-paper);"><strong>Version ${to}</strong><br>${render("delete")}</div>
+          </div>`;
+      } catch (e) {
+        out.innerText = "Could not load the comparison.";
+      }
+    }
         /* Guideline Health Tab */
     let healthItems = [];
 

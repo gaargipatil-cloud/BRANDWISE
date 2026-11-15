@@ -89,3 +89,14 @@ class RuleClarification(Base):
     draft_text = Column(Text, nullable=False)
     status = Column(String(32), nullable=False, default="draft")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+  
+
+class FindingComment(Base):
+    """A comment left on a finding by a Creator, Manager or Reviewer."""
+    __tablename__ = "finding_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    finding_id = Column(Integer, ForeignKey("findings.id"), nullable=False)
+    actor_role = Column(String(64), nullable=False)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  

@@ -3,6 +3,8 @@ import os
 import json
 import time
 import asyncio
+import difflib
+import re
 from collections import defaultdict, Counter
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Request
@@ -11,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .db import engine, Base, get_db
-from .models import Submission, Version, Finding, Action, AuditLog, RuleClarification
+from .models import Submission, Version, Finding, Action, AuditLog, RuleClarification, FindingComment
 from .rules import check_rules
 from .claims import extract_claims
 from .retrieval import retrieve_top_passages
@@ -94,7 +96,9 @@ class DecisionRequest(BaseModel):
 
 class ResubmitRequest(BaseModel):
     text: str = Field(..., max_length=20000)
-
+class CommentRequest(BaseModel):
+    role: str = Field(..., max_length=32)
+    text: str = Field(..., max_length=500)
 class ClarifyRequest(BaseModel):
     rule: str = Field(..., max_length=255)
 
@@ -188,6 +192,11 @@ def count_issues(findings_data: list) -> int:
 
 
 # ---------- Endpoints ----------
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    """Return an empty response so browsers stop logging a 404 for the tab icon."""
+    from fastapi.responses import Response
+    return Response(status_code=204)
 @app.get("/health")
 def health():
     """Health check endpoint for Render and status monitors."""
@@ -236,9 +245,24 @@ async def review_content(payload: ReviewRequest, request: Request, db: Session =
     }
 
 
+def route_reasons(findings) -> list:
+    """Why a draft needs a Reviewer's sign-off, in plain words. Empty means the Manager can decide."""
+    reasons = []
+    bad_claims = [f for f in findings
+                  if f.category == "claim_verification" and f.verdict in ("CONTRADICTED", "UNVERIFIABLE")]
+    if bad_claims:
+        reasons.append(f"{len(bad_claims)} claim(s) contradicted or not verifiable")
+    if any(f.category == "missing_disclaimer" for f in findings):
+        reasons.append("a required regulatory disclaimer is missing")
+    disputed = [f for f in findings if f.status == "disputed"]
+    if disputed:
+        reasons.append(f"{len(disputed)} finding(s) disputed by the creator")
+    return reasons
+
+
 @app.get("/api/queue")
 def get_manager_queue(db: Session = Depends(get_db)):
-    """Return all submissions sorted by risk: High Risk first, then Low Risk."""
+    """Return all submissions, waiting items first, high risk first."""
     submissions = db.query(Submission).order_by(Submission.created_at.desc()).all()
     queue = []
 
@@ -262,19 +286,21 @@ def get_manager_queue(db: Session = Depends(get_db)):
             "version_number": latest_ver.version_number,
             "version_id": latest_ver.id,
             "risk_level": "High Risk" if is_high_risk else "Low Risk",
+            "needs_reviewer": bool(route_reasons(findings)),
             "findings_count": len(findings),
             "disputed_count": disputed_count,
             "created_at": sub.created_at.isoformat()
         })
 
-    # High Risk first, then pending items before decided ones
-    queue.sort(key=lambda x: (0 if x["risk_level"] == "High Risk" else 1, x["status"] != "pending_review"))
+    waiting = ("pending_review", "awaiting_reviewer")
+    queue.sort(key=lambda x: (0 if x["status"] in waiting else 1,
+                              0 if x["risk_level"] == "High Risk" else 1))
     return queue
 
 
 @app.get("/api/submission/{sub_id}")
 def get_submission_detail(sub_id: int, db: Session = Depends(get_db)):
-    """Fetch the latest version text, findings and manager actions for a draft."""
+    """Latest version, findings, routing reasons, version list and decision history."""
     sub = db.query(Submission).filter(Submission.id == sub_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -284,9 +310,11 @@ def get_submission_detail(sub_id: int, db: Session = Depends(get_db)):
     latest_ver = versions[-1] if versions else None
 
     findings = []
-    actions = []
+    reasons = []
     if latest_ver:
-        for f in db.query(Finding).filter(Finding.version_id == latest_ver.id).all():
+        finding_rows = db.query(Finding).filter(Finding.version_id == latest_ver.id).all()
+        reasons = route_reasons([f for f in finding_rows if f.verdict != "SUPPORTED"])
+        for f in finding_rows:
             findings.append({
                 "id": f.id,
                 "category": f.category,
@@ -301,14 +329,19 @@ def get_submission_detail(sub_id: int, db: Session = Depends(get_db)):
                 "status": f.status,
                 "dispute_reason": f.dispute_reason
             })
-        for a in db.query(Action).filter(Action.version_id == latest_ver.id).all():
-            actions.append({
-                "id": a.id,
-                "actor_role": a.actor_role,
-                "action_type": a.action_type,
-                "comment": a.comment,
-                "created_at": a.created_at.isoformat()
-            })
+
+    history = []
+    rows = (db.query(Action, Version.version_number)
+            .filter(Version.id == Action.version_id, Version.submission_id == sub.id)
+            .order_by(Action.created_at).all())
+    for a, ver_no in rows:
+        history.append({
+            "version_number": ver_no,
+            "actor_role": a.actor_role,
+            "action_type": a.action_type,
+            "comment": a.comment,
+            "created_at": a.created_at.strftime("%Y-%m-%d %H:%M")
+        })
 
     return {
         "id": sub.id,
@@ -319,8 +352,68 @@ def get_submission_detail(sub_id: int, db: Session = Depends(get_db)):
         "version_id": latest_ver.id if latest_ver else None,
         "text": latest_ver.text if latest_ver else "",
         "findings": findings,
-        "actions": actions
+        "route_reasons": reasons,
+        "versions": [{"version_number": v.version_number,
+                      "created_at": v.created_at.strftime("%Y-%m-%d %H:%M")} for v in versions],
+        "history": history
     }
+
+
+def tokenize(text: str) -> list:
+    """Split text into words and spaces so a comparison keeps the original spacing."""
+    return re.findall(r"\s+|\S+", text)
+
+
+@app.get("/api/submission/{sub_id}/diff")
+def version_diff(sub_id: int, a: int, b: int, db: Session = Depends(get_db)):
+    """Compare two versions of a draft word by word."""
+    va = db.query(Version).filter(Version.submission_id == sub_id, Version.version_number == a).first()
+    vb = db.query(Version).filter(Version.submission_id == sub_id, Version.version_number == b).first()
+    if not va or not vb:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    ta, tb = tokenize(va.text), tokenize(vb.text)
+    matcher = difflib.SequenceMatcher(a=ta, b=tb, autojunk=False)
+    segments = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            segments.append({"type": "equal", "text": "".join(ta[i1:i2])})
+        else:
+            if i2 > i1:
+                segments.append({"type": "delete", "text": "".join(ta[i1:i2])})
+            if j2 > j1:
+                segments.append({"type": "insert", "text": "".join(tb[j1:j2])})
+    return {"from": a, "to": b, "segments": segments}
+
+
+@app.get("/api/findings/{finding_id}/comments")
+def get_comments(finding_id: int, db: Session = Depends(get_db)):
+    """Comments on one finding, oldest first."""
+    rows = (db.query(FindingComment).filter(FindingComment.finding_id == finding_id)
+            .order_by(FindingComment.id).all())
+    return [{"id": c.id, "role": c.actor_role, "text": c.text,
+             "created_at": c.created_at.strftime("%Y-%m-%d %H:%M")} for c in rows]
+
+
+@app.post("/api/findings/{finding_id}/comments")
+def add_comment(finding_id: int, payload: CommentRequest, db: Session = Depends(get_db)):
+    """Add a comment to a finding."""
+    role = payload.role.strip().capitalize()
+    if role not in ("Creator", "Manager", "Reviewer"):
+        raise HTTPException(status_code=400, detail="Unknown role.")
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Comment is empty.")
+
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    db.add(FindingComment(finding_id=finding_id, actor_role=role, text=text))
+    db.add(AuditLog(actor_role=role, action="Commented on finding",
+                    details=f"Finding {finding_id}: {text[:120]}"))
+    db.commit()
+    return {"status": "ok"}
 
 
 @app.post("/api/findings/{finding_id}/action")
@@ -381,36 +474,63 @@ async def resubmit_version(sub_id: int, payload: ResubmitRequest, request: Reque
     return {"status": "ok", "version_id": new_version.id, "version_number": new_ver_num}
 
 
+
 @app.post("/api/submission/{sub_id}/decision")
 def manager_decision(sub_id: int, payload: DecisionRequest, db: Session = Depends(get_db)):
-    """Record manager final decision: approve or send back."""
+    """Manager or Reviewer decides. Risky drafts go from Manager to Reviewer before approval."""
+    role = payload.actor_role.strip().capitalize()
+    if role not in ("Manager", "Reviewer"):
+        raise HTTPException(status_code=400, detail="Only a Manager or Reviewer can decide.")
+    if payload.action_type not in ("approve", "send_back"):
+        raise HTTPException(status_code=400, detail="Action must be approve or send_back.")
+
+    comment = (payload.comment or "").strip()
+    if payload.action_type == "send_back" and len(comment) < 3:
+        raise HTTPException(status_code=400, detail="Please add a comment explaining what should change.")
+
     sub = db.query(Submission).filter(Submission.id == sub_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
+
+    # Block repeat or out-of-turn decisions
+    if sub.status == "approved":
+        raise HTTPException(status_code=400, detail="This draft is already approved.")
+    if role == "Manager" and sub.status != "pending_review":
+        raise HTTPException(status_code=400,
+                            detail="This draft is not waiting for a Manager (status: %s)." % sub.status)
+    if role == "Reviewer" and sub.status != "awaiting_reviewer":
+        raise HTTPException(status_code=400, detail="This draft is not waiting for a Reviewer.")
 
     latest_ver = (db.query(Version).filter(Version.submission_id == sub.id)
                   .order_by(Version.version_number.desc()).first())
     if not latest_ver:
         raise HTTPException(status_code=400, detail="No version exists for this draft")
 
-    db.add(Action(
-        version_id=latest_ver.id,
-        actor_role=payload.actor_role,
-        action_type=payload.action_type,
-        comment=payload.comment
-    ))
-    sub.status = "approved" if payload.action_type == "approve" else "sent_back"
+    findings = [f for f in db.query(Finding).filter(Finding.version_id == latest_ver.id).all()
+                if f.verdict != "SUPPORTED"]
+    reasons = route_reasons(findings)
+
+    action_type = payload.action_type
+    if payload.action_type == "send_back":
+        new_status = "sent_back"
+    elif role == "Manager" and reasons:
+        new_status = "awaiting_reviewer"
+        action_type = "escalate"
+    else:
+        new_status = "approved"
+
+    db.add(Action(version_id=latest_ver.id, actor_role=role,
+                  action_type=action_type, comment=comment))
+    sub.status = new_status
+
+    if action_type == "escalate":
+        details = f"'{sub.title}' sent to a Reviewer because: {'; '.join(reasons)}."
+    else:
+        details = f"'{sub.title}' is now {new_status}. Note: {comment or 'None'}"
+    db.add(AuditLog(actor_role=role, action=f"{action_type} decision", details=details))
     db.commit()
 
-    db.add(AuditLog(
-        actor_role=payload.actor_role,
-        action=f"{payload.action_type.capitalize()} draft",
-        details=f"Draft '{sub.title}' status changed to {sub.status}. Note: {payload.comment or 'None'}"
-    ))
-    db.commit()
-
-    return {"status": "ok", "submission_status": sub.status}
-
+    return {"status": "ok", "submission_status": new_status, "routed_reasons": reasons}
 
 def rule_key(f: Finding) -> str:
     """The name a finding is grouped under: its source rule, or its category."""
